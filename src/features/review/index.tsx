@@ -108,6 +108,9 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   const [sidebarOpen, setSidebarOpen] = useState(
     (files.data?.length ?? 0) > 3,
   )
+  const [activeFile, setActiveFile] = useState<string | null>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const isScrollingFromTreeRef = useRef(false)
 
   const handleStartComment = useCallback(
     (file: string, line: number, side: 'additions' | 'deletions') => {
@@ -205,7 +208,11 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   const handleScrollToFile = useCallback((path: string) => {
     const el = document.querySelector(`[data-diff-file="${path}"]`)
     if (el) {
+      isScrollingFromTreeRef.current = true
       el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setTimeout(() => {
+        isScrollingFromTreeRef.current = false
+      }, 500)
     }
   }, [])
 
@@ -251,6 +258,37 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
 
   useKeyboardShortcuts(shortcuts)
 
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (!container || !files.data) return
+
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (isScrollingFromTreeRef.current) return
+        for (const entry of entries) {
+          if (entry.isIntersecting && entry.intersectionRatio > 0.3) {
+            const path = (entry.target as HTMLElement).dataset.diffFile
+            if (path) {
+              if (debounceTimer) clearTimeout(debounceTimer)
+              debounceTimer = setTimeout(() => setActiveFile(path), 100)
+            }
+          }
+        }
+      },
+      { root: container, threshold: [0.3] },
+    )
+
+    const elements = container.querySelectorAll('[data-diff-file]')
+    elements.forEach((el) => observer.observe(el))
+
+    return () => {
+      observer.disconnect()
+      if (debounceTimer) clearTimeout(debounceTimer)
+    }
+  }, [files.data])
+
   const parsedFiles = useMemo(() => {
     if (!diff.data) return []
     const patches = parsePatchFiles(diff.data)
@@ -293,8 +331,9 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
           files={files.data ?? []}
           onSelectFile={handleScrollToFile}
           isOpen={sidebarOpen}
+          activeFile={activeFile}
         />
-        <div className="flex-1 flex flex-col gap-4 overflow-auto">
+        <div ref={scrollContainerRef} className="flex-1 flex flex-col gap-4 overflow-auto">
           {metadata.data && (
             <PRHeader
               metadata={metadata.data}

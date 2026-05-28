@@ -7,6 +7,7 @@ interface FileTreeSidebarProps {
   files: PRFile[]
   onSelectFile: (path: string) => void
   isOpen: boolean
+  activeFile?: string | null
 }
 
 const STATUS_MAP: Record<string, GitStatus> = {
@@ -20,7 +21,7 @@ function mapPRStatusToGitStatus(status: string): GitStatus {
   return STATUS_MAP[status] ?? 'modified'
 }
 
-export function FileTreeSidebar({ files, onSelectFile, isOpen }: FileTreeSidebarProps) {
+export function FileTreeSidebar({ files, onSelectFile, isOpen, activeFile }: FileTreeSidebarProps) {
   const paths = useMemo(() => files.map((f) => f.filename), [files])
 
   const { model } = useFileTree({
@@ -48,6 +49,15 @@ export function FileTreeSidebar({ files, onSelectFile, isOpen }: FileTreeSidebar
       onSelectFileRef.current(selected)
     }
   }, [selectedPaths])
+
+  useEffect(() => {
+    if (!activeFile) return
+    const item = model.getItem(activeFile)
+    if (item && !item.isSelected) {
+      item.select()
+      model.scrollToPath(activeFile, { focus: false })
+    }
+  }, [activeFile, model])
 
   if (!isOpen) {
     return null
