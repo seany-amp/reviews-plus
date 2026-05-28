@@ -41,7 +41,7 @@ function App() {
       </nav>
       <main className="flex-1 p-4">
         {view === "review" && <ReviewView pr={currentPR} />}
-        {view === "my-prs" && <MyPRsView />}
+        {view === "my-prs" && <MyPRsView onOpenPR={handleNavigate} />}
         {view === "settings" && <SettingsView />}
       </main>
     </div>

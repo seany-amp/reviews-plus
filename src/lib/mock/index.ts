@@ -2,10 +2,34 @@ import { prMetadata, prFiles, prComments, prReviews, prDiff } from './fixtures';
 
 type InvokeArgs = Record<string, unknown>;
 
+const searchIssuesFixture = {
+  items: [
+    {
+      number: 34417,
+      title: "feat(ext/crypto): add ChaCha20-Poly1305 support",
+      repository_url: "https://api.github.com/repos/denoland/deno",
+      user: { login: "divybot", avatar_url: "https://avatars.githubusercontent.com/u/1234567" },
+      created_at: "2026-05-26T10:00:00Z",
+      pull_request: { url: "https://api.github.com/repos/denoland/deno/pulls/34417" },
+      labels: [],
+    },
+    {
+      number: 15422,
+      title: "fix(nsis): embed signed copies of stock plugins",
+      repository_url: "https://api.github.com/repos/tauri-apps/tauri",
+      user: { login: "koki-develop", avatar_url: "https://avatars.githubusercontent.com/u/7654321" },
+      created_at: "2026-05-21T14:30:00Z",
+      pull_request: { url: "https://api.github.com/repos/tauri-apps/tauri/pulls/15422" },
+      labels: [],
+    },
+  ],
+};
+
 const ENDPOINT_PATTERNS: Array<{
   pattern: RegExp;
   fixture: unknown;
 }> = [
+  { pattern: /\/search\/issues/, fixture: searchIssuesFixture },
   { pattern: /\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/files$/, fixture: prFiles },
   { pattern: /\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/comments$/, fixture: prComments },
   { pattern: /\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/reviews$/, fixture: prReviews },

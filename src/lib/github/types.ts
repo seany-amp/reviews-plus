@@ -42,3 +42,13 @@ export interface PRReview {
   body: string | null
   submitted_at: string
 }
+
+export interface SearchIssueItem {
+  number: number
+  title: string
+  repository_url: string
+  user: { login: string; avatar_url: string }
+  created_at: string
+  labels: Array<{ name: string; color: string }>
+  pull_request: { url: string }
+}

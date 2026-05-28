@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@/lib/mock/invoke'
-import type { PRMetadata, PRFile, PRComment, PRReview } from './types'
+import type { PRMetadata, PRFile, PRComment, PRReview, SearchIssueItem } from './types'
 
 async function githubFetch<T>(
   endpoint: string,
@@ -71,6 +71,18 @@ export function usePRReviews(owner: string, repo: string, number: number) {
         `/repos/${owner}/${repo}/pulls/${number}/reviews`,
       ),
     staleTime: 30_000,
+  })
+}
+
+export function useMyPRs() {
+  return useQuery({
+    queryKey: ['my-prs'],
+    queryFn: () =>
+      githubFetch<{ items: SearchIssueItem[] }>(
+        '/search/issues?q=is:pr+is:open+author:@me',
+      ),
+    staleTime: 60_000,
+    refetchInterval: 60_000,
   })
 }
 
