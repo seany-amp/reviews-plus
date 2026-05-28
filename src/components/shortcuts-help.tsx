@@ -7,6 +7,7 @@ const shortcuts = [
   { keys: 'j / k', description: 'Next / previous file' },
   { keys: 'c', description: 'Comment on line' },
   { keys: '⌘P', description: 'Jump to file' },
+  { keys: '⌘B', description: 'Toggle file sidebar' },
   { keys: '⌘O', description: 'Focus URL input' },
   { keys: '⌘Enter', description: 'Submit comment' },
   { keys: 'Esc', description: 'Cancel / close' },

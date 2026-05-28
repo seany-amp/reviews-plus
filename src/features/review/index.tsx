@@ -16,11 +16,12 @@ import type {
 import type { PRIdentifier } from '@/lib/github/parse-url'
 import type { PRMetadata, PRReview, PRComment } from '@/lib/github/types'
 import { toast } from 'sonner'
-import { AlertTriangle, Settings } from 'lucide-react'
+import { AlertTriangle, PanelLeft, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts'
 import { FilePalette } from '@/components/file-palette'
 import { ShortcutsHelp } from '@/components/shortcuts-help'
+import { FileTreeSidebar } from '@/components/file-tree-sidebar'
 
 interface ActiveComment {
   file: string
@@ -104,6 +105,9 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   const [currentFileIndex, setCurrentFileIndex] = useState(0)
   const [filePaletteOpen, setFilePaletteOpen] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(
+    (files.data?.length ?? 0) > 3,
+  )
 
   const handleStartComment = useCallback(
     (file: string, line: number, side: 'additions' | 'deletions') => {
@@ -198,6 +202,13 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     }
   }, [])
 
+  const handleScrollToFile = useCallback((path: string) => {
+    const el = document.querySelector(`[data-diff-file="${path}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [])
+
   const shortcuts = useMemo(
     () => [
       {
@@ -223,6 +234,11 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
         key: 'p',
         metaKey: true,
         handler: () => setFilePaletteOpen(true),
+      },
+      {
+        key: 'b',
+        metaKey: true,
+        handler: () => setSidebarOpen((prev) => !prev),
       },
       {
         key: '?',
@@ -272,38 +288,47 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
 
   return (
     <>
-      <div className="flex flex-col gap-4 h-full overflow-auto">
-        {metadata.data && (
-          <PRHeader
-            metadata={metadata.data}
-            reviews={reviews.data}
-            fileCount={files.data?.length ?? metadata.data.changed_files}
-          />
-        )}
-        <div className="flex flex-col gap-2">
-          {parsedFiles.map((file, i) => (
-            <DiffFileContainer
-              key={file.name ?? i}
-              filename={file.name}
-            >
-              <DiffFile
-                metadata={file}
-                comments={commentsByFile.get(file.name) ?? []}
-                activeComment={
-                  activeComment?.file === file.name ? activeComment : null
-                }
-                activeReply={
-                  activeReply?.file === file.name ? activeReply : null
-                }
-                onStartComment={handleStartComment}
-                onStartReply={handleStartReply}
-                onCancelComment={handleCancelComment}
-                onSubmitComment={handleSubmitComment}
-                onSubmitReply={handleSubmitReply}
-                isSubmitting={postComment.isPending}
-              />
-            </DiffFileContainer>
-          ))}
+      <div className="flex h-full overflow-hidden">
+        <FileTreeSidebar
+          files={files.data ?? []}
+          onSelectFile={handleScrollToFile}
+          isOpen={sidebarOpen}
+        />
+        <div className="flex-1 flex flex-col gap-4 overflow-auto">
+          {metadata.data && (
+            <PRHeader
+              metadata={metadata.data}
+              reviews={reviews.data}
+              fileCount={files.data?.length ?? metadata.data.changed_files}
+              sidebarOpen={sidebarOpen}
+              onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
+            />
+          )}
+          <div className="flex flex-col gap-2">
+            {parsedFiles.map((file, i) => (
+              <DiffFileContainer
+                key={file.name ?? i}
+                filename={file.name}
+              >
+                <DiffFile
+                  metadata={file}
+                  comments={commentsByFile.get(file.name) ?? []}
+                  activeComment={
+                    activeComment?.file === file.name ? activeComment : null
+                  }
+                  activeReply={
+                    activeReply?.file === file.name ? activeReply : null
+                  }
+                  onStartComment={handleStartComment}
+                  onStartReply={handleStartReply}
+                  onCancelComment={handleCancelComment}
+                  onSubmitComment={handleSubmitComment}
+                  onSubmitReply={handleSubmitReply}
+                  isSubmitting={postComment.isPending}
+                />
+              </DiffFileContainer>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -323,14 +348,27 @@ function PRHeader({
   metadata,
   reviews,
   fileCount,
+  sidebarOpen,
+  onToggleSidebar,
 }: {
   metadata: PRMetadata
   reviews: PRReview[] | undefined
   fileCount: number
+  sidebarOpen: boolean
+  onToggleSidebar: () => void
 }) {
   return (
     <div className="border rounded-lg p-4 bg-card">
       <div className="flex items-center gap-3 mb-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8 flex-shrink-0"
+          onClick={onToggleSidebar}
+          title={sidebarOpen ? 'Hide sidebar (⌘B)' : 'Show sidebar (⌘B)'}
+        >
+          <PanelLeft className="size-4" />
+        </Button>
         <img
           src={metadata.user.avatar_url}
           alt={metadata.user.login}
