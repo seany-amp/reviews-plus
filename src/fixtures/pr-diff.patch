@@ -1,0 +1,1053 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index f9094360f0e1b0..4a88d0986cd5e4 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2223,6 +2223,7 @@ dependencies = [
+  "ecdsa",
+  "ed448-goldilocks",
+  "elliptic-curve 0.13.8",
++ "hmac",
+  "num-traits",
+  "ocb3",
+  "once_cell",
+diff --git a/ext/crypto/00_crypto.js b/ext/crypto/00_crypto.js
+index 97926cebff153a..3248c41ed9025a 100644
+--- a/ext/crypto/00_crypto.js
++++ b/ext/crypto/00_crypto.js
+@@ -39,6 +39,7 @@ const {
+   op_crypto_sign_ed25519,
+   op_crypto_sign_key,
+   op_crypto_subtle_digest,
++  op_crypto_subtle_digest_xof,
+   op_crypto_unwrap_key,
+   op_crypto_verify_ed25519,
+   op_crypto_verify_key,
+@@ -119,6 +120,16 @@ const simpleAlgorithmDictionaries = {
+   RsaOaepParams: { label: "BufferSource" },
+   RsaHashedImportParams: { hash: "HashAlgorithmIdentifier" },
+   EcKeyImportParams: {},
++  ChaCha20Poly1305Params: {
++    nonce: "BufferSource",
++    additionalData: "BufferSource",
++  },
++  ShakeParams: {},
++  CShakeParams: {
++    functionName: "BufferSource",
++    customization: "BufferSource",
++  },
++  TurboShakeParams: {},
+ };
+ 
+ const supportedAlgorithms = {
+@@ -130,6 +141,12 @@ const supportedAlgorithms = {
+     "SHA3-256": null,
+     "SHA3-384": null,
+     "SHA3-512": null,
++    "SHAKE128": "ShakeParams",
++    "SHAKE256": "ShakeParams",
++    "cSHAKE128": "CShakeParams",
++    "cSHAKE256": "CShakeParams",
++    "TurboSHAKE128": "TurboShakeParams",
++    "TurboSHAKE256": "TurboShakeParams",
+   },
+   "generateKey": {
+     "RSASSA-PKCS1-v1_5": "RsaHashedKeyGenParams",
+@@ -143,6 +160,7 @@ const supportedAlgorithms = {
+     "AES-OCB": "AesKeyGenParams",
+     "AES-KW": "AesKeyGenParams",
+     "HMAC": "HmacKeyGenParams",
++    "ChaCha20-Poly1305": null,
+     "X25519": null,
+     "X448": null,
+     "Ed25519": null,
+@@ -193,7 +211,7 @@ const supportedAlgorithms = {
+     "AES-GCM": "AesGcmParams",
+     "AES-OCB": "AesGcmParams",
+     "AES-CTR": "AesCtrParams",
+-    "ChaCha20-Poly1305": null,
++    "ChaCha20-Poly1305": "ChaCha20Poly1305Params",
+   },
+   "decrypt": {
+     "RSA-OAEP": "RsaOaepParams",
+@@ -201,7 +219,7 @@ const supportedAlgorithms = {
+     "AES-GCM": "AesGcmParams",
+     "AES-OCB": "AesGcmParams",
+     "AES-CTR": "AesCtrParams",
+-    "ChaCha20-Poly1305": null,
++    "ChaCha20-Poly1305": "ChaCha20Poly1305Params",
+   },
+   "get key length": {
+     "AES-CBC": "AesDerivedKeyParams",
+@@ -579,6 +597,48 @@ class SubtleCrypto {
+ 
+     algorithm = normalizeAlgorithm(algorithm, "digest");
+ 
++    switch (algorithm.name) {
++      case "SHAKE128":
++      case "SHAKE256":
++      case "cSHAKE128":
++      case "cSHAKE256":
++      case "TurboSHAKE128":
++      case "TurboSHAKE256": {
++        if (algorithm.length === undefined || algorithm.length === 0) {
++          throw new DOMException(
++            `'length' must be a positive multiple of 8 for ${algorithm.name}`,
++            "OperationError",
++          );
++        }
++        if (algorithm.length % 8 !== 0) {
++          throw new DOMException(
++            `'length' must be a multiple of 8 for ${algorithm.name}`,
++            "OperationError",
++          );
++        }
++        if (
++          (algorithm.name === "TurboSHAKE128" ||
++            algorithm.name === "TurboSHAKE256") &&
++          algorithm.domainSeparation !== undefined &&
++          (algorithm.domainSeparation < 0x01 ||
++            algorithm.domainSeparation > 0x7F)
++        ) {
++          throw new DOMException(
++            "'domainSeparation' must be in [0x01, 0x7F]",
++            "OperationError",
++          );
++        }
++        const xofResult = await op_crypto_subtle_digest_xof({
++          name: algorithm.name,
++          length: algorithm.length,
++          functionName: algorithm.functionName ?? null,
++          customization: algorithm.customization ?? null,
++          domainSeparation: algorithm.domainSeparation ?? null,
++        }, data);
++        return TypedArrayPrototypeGetBuffer(xofResult);
++      }
++    }
++
+     const result = await op_crypto_subtle_digest(
+       algorithm.name,
+       data,
+@@ -834,6 +894,40 @@ class SubtleCrypto {
+         // 9.
+         return TypedArrayPrototypeGetBuffer(plaintext);
+       }
++      case "ChaCha20-Poly1305": {
++        if (normalizedAlgorithm.nonce === undefined) {
++          throw new TypeError("nonce is required");
++        }
++        normalizedAlgorithm.nonce = copyBuffer(normalizedAlgorithm.nonce);
++        if (
++          TypedArrayPrototypeGetByteLength(normalizedAlgorithm.nonce) !== 12
++        ) {
++          throw new DOMException(
++            "ChaCha20-Poly1305 nonce must be 12 bytes",
++            "OperationError",
++          );
++        }
++        if (TypedArrayPrototypeGetByteLength(data) < 16) {
++          throw new DOMException(
++            "The provided data is too small",
++            "OperationError",
++          );
++        }
++        if (normalizedAlgorithm.additionalData !== undefined) {
++          normalizedAlgorithm.additionalData = copyBuffer(
++            normalizedAlgorithm.additionalData,
++          );
++        }
++
++        const plaintext = await op_crypto_decrypt({
++          key: keyData,
++          algorithm: "ChaCha20-Poly1305",
++          nonce: normalizedAlgorithm.nonce,
++          additionalData: normalizedAlgorithm.additionalData || null,
++        }, data);
++
++        return TypedArrayPrototypeGetBuffer(plaintext);
++      }
+       default:
+         throw new DOMException("Not implemented", "NotSupportedError");
+     }
+@@ -2136,6 +2230,46 @@ async function generateKey(normalizedAlgorithm, extractable, usages) {
+ 
+       return { publicKey, privateKey };
+     }
++    case "ChaCha20-Poly1305": {
++      // 1.
++      if (
++        ArrayPrototypeFind(
++          usages,
++          (u) =>
++            !ArrayPrototypeIncludes([
++              "encrypt",
++              "decrypt",
++              "wrapKey",
++              "unwrapKey",
++            ], u),
++        ) !== undefined
++      ) {
++        throw new DOMException("Invalid key usage", "SyntaxError");
++      }
++
++      // 2. ChaCha20-Poly1305 keys are always 256 bits.
++      const keyData = await op_crypto_generate_key({
++        algorithm: "AES",
++        length: 256,
++      });
++      const handle = {};
++      WeakMapPrototypeSet(KEY_STORE, handle, {
++        type: "secret",
++        data: keyData,
++      });
++
++      const algorithm = {
++        name: algorithmName,
++      };
++
++      return constructKey(
++        "secret",
++        extractable,
++        usages,
++        algorithm,
++        handle,
++      );
++    }
+     case "HMAC": {
+       // 1.
+       if (
+@@ -5410,6 +5544,36 @@ async function encrypt(normalizedAlgorithm, key, data) {
+       // 7.
+       return TypedArrayPrototypeGetBuffer(cipherText);
+     }
++    case "ChaCha20-Poly1305": {
++      if (normalizedAlgorithm.nonce === undefined) {
++        throw new TypeError("nonce is required");
++      }
++      normalizedAlgorithm.nonce = copyBuffer(normalizedAlgorithm.nonce);
++      if (TypedArrayPrototypeGetByteLength(normalizedAlgorithm.nonce) !== 12) {
++        throw new DOMException(
++          "ChaCha20-Poly1305 nonce must be 12 bytes",
++          "OperationError",
++        );
++      }
++      // RFC 8439 plaintext size cap.
++      if (TypedArrayPrototypeGetByteLength(data) > ((2 ** 32) - 1) * 64) {
++        throw new DOMException("Plaintext too large", "OperationError");
++      }
++      if (normalizedAlgorithm.additionalData !== undefined) {
++        normalizedAlgorithm.additionalData = copyBuffer(
++          normalizedAlgorithm.additionalData,
++        );
++      }
++
++      const cipherText = await op_crypto_encrypt({
++        key: keyData,
++        algorithm: "ChaCha20-Poly1305",
++        nonce: normalizedAlgorithm.nonce,
++        additionalData: normalizedAlgorithm.additionalData || null,
++      }, data);
++
++      return TypedArrayPrototypeGetBuffer(cipherText);
++    }
+     default:
+       throw new DOMException("Not implemented", "NotSupportedError");
+   }
+@@ -5983,6 +6147,76 @@ const dictEcdhKeyDeriveParams = [
+ webidl.converters.EcdhKeyDeriveParams = webidl
+   .createDictionaryConverter("EcdhKeyDeriveParams", dictEcdhKeyDeriveParams);
+ 
++const dictChaCha20Poly1305Params = [
++  ...new SafeArrayIterator(dictAlgorithm),
++  {
++    key: "nonce",
++    converter: webidl.converters["BufferSource"],
++    required: true,
++  },
++  {
++    key: "additionalData",
++    converter: webidl.converters["BufferSource"],
++  },
++];
++
++webidl.converters.ChaCha20Poly1305Params = webidl.createDictionaryConverter(
++  "ChaCha20Poly1305Params",
++  dictChaCha20Poly1305Params,
++);
++
++const dictShakeParams = [
++  ...new SafeArrayIterator(dictAlgorithm),
++  {
++    key: "length",
++    converter: (V, prefix, context, opts) =>
++      webidl.converters["unsigned long"](V, prefix, context, {
++        ...opts,
++        enforceRange: true,
++      }),
++    required: true,
++  },
++];
++
++webidl.converters.ShakeParams = webidl.createDictionaryConverter(
++  "ShakeParams",
++  dictShakeParams,
++);
++
++const dictCShakeParams = [
++  ...new SafeArrayIterator(dictShakeParams),
++  {
++    key: "functionName",
++    converter: webidl.converters["BufferSource"],
++  },
++  {
++    key: "customization",
++    converter: webidl.converters["BufferSource"],
++  },
++];
++
++webidl.converters.CShakeParams = webidl.createDictionaryConverter(
++  "CShakeParams",
++  dictCShakeParams,
++);
++
++const dictTurboShakeParams = [
++  ...new SafeArrayIterator(dictShakeParams),
++  {
++    key: "domainSeparation",
++    converter: (V, prefix, context, opts) =>
++      webidl.converters["octet"](V, prefix, context, {
++        ...opts,
++        enforceRange: true,
++      }),
++  },
++];
++
++webidl.converters.TurboShakeParams = webidl.createDictionaryConverter(
++  "TurboShakeParams",
++  dictTurboShakeParams,
++);
++
+ // Bridge functions for Node.js KeyObject interop
+ 
+ /**
+diff --git a/ext/crypto/Cargo.toml b/ext/crypto/Cargo.toml
+index cb820463bf3d78..2ed92d5fa9f723 100644
+--- a/ext/crypto/Cargo.toml
++++ b/ext/crypto/Cargo.toml
+@@ -28,6 +28,7 @@ deno_error.workspace = true
+ ecdsa.workspace = true
+ ed448-goldilocks = { workspace = true }
+ elliptic-curve = { workspace = true, features = ["std", "pem", "arithmetic"] }
++hmac.workspace = true
+ num-traits.workspace = true
+ ocb3.workspace = true
+ once_cell.workspace = true
+diff --git a/ext/crypto/decrypt.rs b/ext/crypto/decrypt.rs
+index a95fe7166a472c..16da0fbe77588a 100644
+--- a/ext/crypto/decrypt.rs
++++ b/ext/crypto/decrypt.rs
+@@ -12,6 +12,11 @@ use aes_gcm::aead::generic_array::typenum::U16;
+ use aes_gcm::aes::Aes128;
+ use aes_gcm::aes::Aes192;
+ use aes_gcm::aes::Aes256;
++use aws_lc_rs::aead::Aad;
++use aws_lc_rs::aead::CHACHA20_POLY1305;
++use aws_lc_rs::aead::LessSafeKey;
++use aws_lc_rs::aead::Nonce as AwsNonce;
++use aws_lc_rs::aead::UnboundKey;
+ use ctr::Ctr32BE;
+ use ctr::Ctr64BE;
+ use ctr::Ctr128BE;
+@@ -80,6 +85,13 @@ pub enum DecryptAlgorithm {
+     length: usize,
+     tag_length: usize,
+   },
++  #[serde(rename = "ChaCha20-Poly1305", rename_all = "camelCase")]
++  ChaCha20Poly1305 {
++    #[serde(with = "serde_bytes")]
++    nonce: Vec<u8>,
++    #[serde(with = "serde_bytes")]
++    additional_data: Option<Vec<u8>>,
++  },
+ }
+ 
+ #[derive(Debug, thiserror::Error, deno_error::JsError)]
+@@ -115,6 +127,12 @@ pub enum DecryptError {
+   #[class(type)]
+   #[error("iv length not equal to 12 or 16")]
+   InvalidIvLength,
++  #[class(type)]
++  #[error("invalid ChaCha20-Poly1305 nonce length: expected 12 bytes")]
++  InvalidChaChaNonceLength,
++  #[class(type)]
++  #[error("invalid ChaCha20-Poly1305 key length: expected 32 bytes")]
++  InvalidChaChaKeyLength,
+   #[class("DOMExceptionOperationError")]
+   #[error("{0}")]
+   Rsa(rsa::Error),
+@@ -150,6 +168,10 @@ pub async fn op_crypto_decrypt(
+       length,
+       tag_length,
+     } => decrypt_aes_ocb(key, length, tag_length, iv, additional_data, &data),
++    DecryptAlgorithm::ChaCha20Poly1305 {
++      nonce,
++      additional_data,
++    } => decrypt_chacha20_poly1305(key, &nonce, additional_data, &data),
+   };
+   let buf = spawn_blocking(fun).await.unwrap()?;
+   Ok(buf.into())
+@@ -407,6 +429,39 @@ fn decrypt_aes_gcm(
+   Ok(plaintext)
+ }
+ 
++fn decrypt_chacha20_poly1305(
++  key: V8RawKeyData,
++  nonce: &[u8],
++  additional_data: Option<Vec<u8>>,
++  data: &[u8],
++) -> Result<Vec<u8>, DecryptError> {
++  let key_bytes = key.as_secret_key()?;
++  if key_bytes.len() != 32 {
++    return Err(DecryptError::InvalidChaChaKeyLength);
++  }
++  if nonce.len() != 12 {
++    return Err(DecryptError::InvalidChaChaNonceLength);
++  }
++  // 16-byte Poly1305 tag is appended.
++  if data.len() < 16 {
++    return Err(DecryptError::Failed);
++  }
++
++  let unbound_key = UnboundKey::new(&CHACHA20_POLY1305, key_bytes)
++    .map_err(|_| DecryptError::Failed)?;
++  let opening_key = LessSafeKey::new(unbound_key);
++  let aws_nonce = AwsNonce::try_assume_unique_for_key(nonce)
++    .map_err(|_| DecryptError::Failed)?;
++  let aad = additional_data.unwrap_or_default();
++
++  let mut in_out = data.to_vec();
++  let plaintext = opening_key
++    .open_in_place(aws_nonce, Aad::from(&aad), &mut in_out)
++    .map_err(|_| DecryptError::Failed)?;
++
++  Ok(plaintext.to_vec())
++}
++
+ fn decrypt_aes_ocb(
+   key: V8RawKeyData,
+   length: usize,
+diff --git a/ext/crypto/encrypt.rs b/ext/crypto/encrypt.rs
+index bb9ca0d20432f5..1c8faacc6be3e9 100644
+--- a/ext/crypto/encrypt.rs
++++ b/ext/crypto/encrypt.rs
+@@ -13,6 +13,11 @@ use aes_gcm::aead::generic_array::typenum::U16;
+ use aes_gcm::aes::Aes128;
+ use aes_gcm::aes::Aes192;
+ use aes_gcm::aes::Aes256;
++use aws_lc_rs::aead::Aad;
++use aws_lc_rs::aead::CHACHA20_POLY1305;
++use aws_lc_rs::aead::LessSafeKey;
++use aws_lc_rs::aead::Nonce as AwsNonce;
++use aws_lc_rs::aead::UnboundKey;
+ use ctr::Ctr32BE;
+ use ctr::Ctr64BE;
+ use ctr::Ctr128BE;
+@@ -81,6 +86,13 @@ pub enum EncryptAlgorithm {
+     ctr_length: usize,
+     key_length: usize,
+   },
++  #[serde(rename = "ChaCha20-Poly1305", rename_all = "camelCase")]
++  ChaCha20Poly1305 {
++    #[serde(with = "serde_bytes")]
++    nonce: Vec<u8>,
++    #[serde(with = "serde_bytes")]
++    additional_data: Option<Vec<u8>>,
++  },
+ }
+ 
+ #[derive(Debug, thiserror::Error, deno_error::JsError)]
+@@ -102,6 +114,12 @@ pub enum EncryptError {
+   #[error("iv length not equal to 12 or 16")]
+   InvalidIvLength,
+   #[class(type)]
++  #[error("invalid ChaCha20-Poly1305 nonce length: expected 12 bytes")]
++  InvalidChaChaNonceLength,
++  #[class(type)]
++  #[error("invalid ChaCha20-Poly1305 key length: expected 32 bytes")]
++  InvalidChaChaKeyLength,
++  #[class(type)]
+   #[error("invalid counter length. Currently supported 32/64/128 bits")]
+   InvalidCounterLength,
+   #[class("DOMExceptionOperationError")]
+@@ -142,6 +160,10 @@ pub async fn op_crypto_encrypt(
+       ctr_length,
+       key_length,
+     } => encrypt_aes_ctr(key, key_length, &counter, ctr_length, &data),
++    EncryptAlgorithm::ChaCha20Poly1305 {
++      nonce,
++      additional_data,
++    } => encrypt_chacha20_poly1305(key, &nonce, additional_data, &data),
+   };
+   let buf = spawn_blocking(fun).await.unwrap()?;
+   Ok(buf.into())
+@@ -376,6 +398,39 @@ fn encrypt_aes_ocb(
+   Ok(ciphertext)
+ }
+ 
++fn encrypt_chacha20_poly1305(
++  key: V8RawKeyData,
++  nonce: &[u8],
++  additional_data: Option<Vec<u8>>,
++  data: &[u8],
++) -> Result<Vec<u8>, EncryptError> {
++  let key_bytes = key.as_secret_key()?;
++  if key_bytes.len() != 32 {
++    return Err(EncryptError::InvalidChaChaKeyLength);
++  }
++  if nonce.len() != 12 {
++    return Err(EncryptError::InvalidChaChaNonceLength);
++  }
++  // RFC 8439 caps plaintext length per nonce at 2^32 * 64 - 64 bytes.
++  if data.len() as u64 > ((1u64 << 32) - 1) * 64 {
++    return Err(EncryptError::TooMuchData);
++  }
++
++  let unbound_key = UnboundKey::new(&CHACHA20_POLY1305, key_bytes)
++    .map_err(|_| EncryptError::Failed)?;
++  let sealing_key = LessSafeKey::new(unbound_key);
++  let aws_nonce = AwsNonce::try_assume_unique_for_key(nonce)
++    .map_err(|_| EncryptError::Failed)?;
++  let aad = additional_data.unwrap_or_default();
++
++  let mut in_out = data.to_vec();
++  sealing_key
++    .seal_in_place_append_tag(aws_nonce, Aad::from(&aad), &mut in_out)
++    .map_err(|_| EncryptError::Failed)?;
++
++  Ok(in_out)
++}
++
+ fn encrypt_aes_ctr_gen<B>(
+   key: &[u8],
+   counter: &[u8],
+diff --git a/ext/crypto/generate_key.rs b/ext/crypto/generate_key.rs
+index bb736a5354b55d..d4d3dbb60f3d1f 100644
+--- a/ext/crypto/generate_key.rs
++++ b/ext/crypto/generate_key.rs
+@@ -159,15 +159,26 @@ fn generate_key_hmac(
+   hash: ShaHash,
+   length: Option<usize>,
+ ) -> Result<Vec<u8>, GenerateKeyError> {
+-  let hash = match hash {
+-    ShaHash::Sha1 => &aws_lc_rs::hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY,
+-    ShaHash::Sha256 => &aws_lc_rs::hmac::HMAC_SHA256,
+-    ShaHash::Sha384 => &aws_lc_rs::hmac::HMAC_SHA384,
+-    ShaHash::Sha512 => &aws_lc_rs::hmac::HMAC_SHA512,
+-    // SHA3 is not supported by aws-lc-rs for HMAC
+-    ShaHash::Sha3_256 | ShaHash::Sha3_384 | ShaHash::Sha3_512 => {
+-      return Err(GenerateKeyError::UnsupportedAlgorithm);
++  // Default key length (in bytes) is the hash's block size.
++  // SHA-3 is not supported by aws-lc-rs for HMAC, so the block sizes are
++  // hard-coded here per FIPS 202.
++  let default_block_len = match hash {
++    ShaHash::Sha1 => aws_lc_rs::hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY
++      .digest_algorithm()
++      .block_len(),
++    ShaHash::Sha256 => {
++      aws_lc_rs::hmac::HMAC_SHA256.digest_algorithm().block_len()
+     }
++    ShaHash::Sha384 => {
++      aws_lc_rs::hmac::HMAC_SHA384.digest_algorithm().block_len()
++    }
++    ShaHash::Sha512 => {
++      aws_lc_rs::hmac::HMAC_SHA512.digest_algorithm().block_len()
++    }
++    // FIPS 202: rate (r) in bytes for SHA3-N is (1600 - 2N) / 8.
++    ShaHash::Sha3_256 => 136,
++    ShaHash::Sha3_384 => 104,
++    ShaHash::Sha3_512 => 72,
+   };
+ 
+   let length = if let Some(length) = length {
+@@ -182,7 +193,7 @@ fn generate_key_hmac(
+ 
+     length
+   } else {
+-    hash.digest_algorithm().block_len()
++    default_block_len
+   };
+ 
+   let rng = aws_lc_rs::rand::SystemRandom::new();
+diff --git a/ext/crypto/lib.rs b/ext/crypto/lib.rs
+index 946628b6d6f106..84714278ce70aa 100644
+--- a/ext/crypto/lib.rs
++++ b/ext/crypto/lib.rs
+@@ -50,6 +50,9 @@ use sha2::Digest;
+ use sha2::Sha256;
+ use sha2::Sha384;
+ use sha2::Sha512;
++use sha3::Sha3_256;
++use sha3::Sha3_384;
++use sha3::Sha3_512;
+ use signature::hazmat::PrehashSigner;
+ use signature::hazmat::PrehashVerifier; // Re-export rand
+ 
+@@ -97,6 +100,7 @@ deno_core::extension!(deno_crypto,
+     op_crypto_encrypt,
+     op_crypto_decrypt,
+     op_crypto_subtle_digest,
++    op_crypto_subtle_digest_xof,
+     op_crypto_random_uuid,
+     op_crypto_wrap_key,
+     op_crypto_unwrap_key,
+@@ -431,13 +435,25 @@ pub async fn op_crypto_sign_key(
+         }
+       }
+       Algorithm::Hmac => {
+-        let hash: HmacAlgorithm =
+-          args.hash.ok_or_else(JsErrorBox::not_supported)?.into();
++        let hash = args.hash.ok_or_else(JsErrorBox::not_supported)?;
+ 
+-        let key = HmacKey::new(hash, &args.key.data);
+-
+-        let signature = aws_lc_rs::hmac::sign(&key, data);
+-        signature.as_ref().to_vec()
++        match hash {
++          CryptoHash::Sha3_256 => {
++            hmac_sign::<hmac::Hmac<Sha3_256>>(&args.key.data, data)?
++          }
++          CryptoHash::Sha3_384 => {
++            hmac_sign::<hmac::Hmac<Sha3_384>>(&args.key.data, data)?
++          }
++          CryptoHash::Sha3_512 => {
++            hmac_sign::<hmac::Hmac<Sha3_512>>(&args.key.data, data)?
++          }
++          _ => {
++            let hash: HmacAlgorithm = hash.into();
++            let key = HmacKey::new(hash, &args.key.data);
++            let signature = aws_lc_rs::hmac::sign(&key, data);
++            signature.as_ref().to_vec()
++          }
++        }
+       }
+       _ => return Err(CryptoError::UnsupportedAlgorithm),
+     };
+@@ -447,6 +463,27 @@ pub async fn op_crypto_sign_key(
+   .await?
+ }
+ 
++fn hmac_sign<M: hmac::Mac + hmac::digest::KeyInit>(
++  key: &[u8],
++  data: &[u8],
++) -> Result<Vec<u8>, CryptoError> {
++  let mut mac = <M as hmac::Mac>::new_from_slice(key)
++    .map_err(|_| CryptoError::InvalidKeyLength)?;
++  mac.update(data);
++  Ok(mac.finalize().into_bytes().to_vec())
++}
++
++fn hmac_verify<M: hmac::Mac + hmac::digest::KeyInit>(
++  key: &[u8],
++  data: &[u8],
++  signature: &[u8],
++) -> Result<bool, CryptoError> {
++  let mut mac = <M as hmac::Mac>::new_from_slice(key)
++    .map_err(|_| CryptoError::InvalidKeyLength)?;
++  mac.update(data);
++  Ok(mac.verify_slice(signature).is_ok())
++}
++
+ #[derive(deno_core::FromV8)]
+ pub struct VerifyArg {
+   #[from_v8(serde)]
+@@ -530,10 +567,29 @@ pub async fn op_crypto_verify_key(
+         }
+       }
+       Algorithm::Hmac => {
+-        let hash: HmacAlgorithm =
+-          args.hash.ok_or_else(JsErrorBox::not_supported)?.into();
+-        let key = HmacKey::new(hash, &args.key.data);
+-        aws_lc_rs::hmac::verify(&key, data, &args.signature).is_ok()
++        let hash = args.hash.ok_or_else(JsErrorBox::not_supported)?;
++        match hash {
++          CryptoHash::Sha3_256 => hmac_verify::<hmac::Hmac<Sha3_256>>(
++            &args.key.data,
++            data,
++            &args.signature,
++          )?,
++          CryptoHash::Sha3_384 => hmac_verify::<hmac::Hmac<Sha3_384>>(
++            &args.key.data,
++            data,
++            &args.signature,
++          )?,
++          CryptoHash::Sha3_512 => hmac_verify::<hmac::Hmac<Sha3_512>>(
++            &args.key.data,
++            data,
++            &args.signature,
++          )?,
++          _ => {
++            let hash: HmacAlgorithm = hash.into();
++            let key = HmacKey::new(hash, &args.key.data);
++            aws_lc_rs::hmac::verify(&key, data, &args.signature).is_ok()
++          }
++        }
+       }
+       Algorithm::Ecdsa => {
+         let hash = args.hash.ok_or_else(|| CryptoError::MissingArgumentHash)?;
+@@ -893,6 +949,139 @@ pub async fn op_crypto_subtle_digest(
+   Ok(output)
+ }
+ 
++#[derive(Deserialize)]
++#[serde(rename_all = "camelCase", tag = "name")]
++pub enum SubtleDigestXof {
++  #[serde(rename = "SHAKE128", rename_all = "camelCase")]
++  Shake128 { length: u32 },
++  #[serde(rename = "SHAKE256", rename_all = "camelCase")]
++  Shake256 { length: u32 },
++  #[serde(rename = "cSHAKE128", rename_all = "camelCase")]
++  CShake128 {
++    length: u32,
++    #[serde(with = "serde_bytes", default)]
++    function_name: Option<Vec<u8>>,
++    #[serde(with = "serde_bytes", default)]
++    customization: Option<Vec<u8>>,
++  },
++  #[serde(rename = "cSHAKE256", rename_all = "camelCase")]
++  CShake256 {
++    length: u32,
++    #[serde(with = "serde_bytes", default)]
++    function_name: Option<Vec<u8>>,
++    #[serde(with = "serde_bytes", default)]
++    customization: Option<Vec<u8>>,
++  },
++  #[serde(rename = "TurboSHAKE128", rename_all = "camelCase")]
++  TurboShake128 {
++    length: u32,
++    domain_separation: Option<u8>,
++  },
++  #[serde(rename = "TurboSHAKE256", rename_all = "camelCase")]
++  TurboShake256 {
++    length: u32,
++    domain_separation: Option<u8>,
++  },
++}
++
++#[op2]
++pub async fn op_crypto_subtle_digest_xof(
++  #[serde] algorithm: SubtleDigestXof,
++  #[buffer] data: JsBuffer,
++) -> Result<Uint8Array, CryptoError> {
++  let output = spawn_blocking(move || {
++    use sha3::digest::ExtendableOutput;
++    use sha3::digest::Update;
++    use sha3::digest::XofReader;
++
++    let length_bits = match &algorithm {
++      SubtleDigestXof::Shake128 { length, .. }
++      | SubtleDigestXof::Shake256 { length, .. }
++      | SubtleDigestXof::CShake128 { length, .. }
++      | SubtleDigestXof::CShake256 { length, .. }
++      | SubtleDigestXof::TurboShake128 { length, .. }
++      | SubtleDigestXof::TurboShake256 { length, .. } => *length,
++    };
++    if !length_bits.is_multiple_of(8) {
++      return Err(CryptoError::InvalidKeyLength);
++    }
++    let out_len = (length_bits / 8) as usize;
++    let mut out = vec![0u8; out_len];
++
++    match algorithm {
++      SubtleDigestXof::Shake128 { .. } => {
++        let mut h = sha3::Shake128::default();
++        h.update(&data);
++        h.finalize_xof().read(&mut out);
++      }
++      SubtleDigestXof::Shake256 { .. } => {
++        let mut h = sha3::Shake256::default();
++        h.update(&data);
++        h.finalize_xof().read(&mut out);
++      }
++      SubtleDigestXof::CShake128 {
++        function_name,
++        customization,
++        ..
++      } => {
++        use sha3::digest::core_api::CoreWrapper;
++        let core = sha3::CShake128Core::new_with_function_name(
++          function_name.as_deref().unwrap_or(&[]),
++          customization.as_deref().unwrap_or(&[]),
++        );
++        let mut h: sha3::CShake128 = CoreWrapper::from_core(core);
++        h.update(&data);
++        h.finalize_xof().read(&mut out);
++      }
++      SubtleDigestXof::CShake256 {
++        function_name,
++        customization,
++        ..
++      } => {
++        use sha3::digest::core_api::CoreWrapper;
++        let core = sha3::CShake256Core::new_with_function_name(
++          function_name.as_deref().unwrap_or(&[]),
++          customization.as_deref().unwrap_or(&[]),
++        );
++        let mut h: sha3::CShake256 = CoreWrapper::from_core(core);
++        h.update(&data);
++        h.finalize_xof().read(&mut out);
++      }
++      SubtleDigestXof::TurboShake128 {
++        domain_separation, ..
++      } => {
++        use sha3::digest::core_api::CoreWrapper;
++        let d = domain_separation.unwrap_or(0x1F);
++        if !(0x01..=0x7F).contains(&d) {
++          return Err(CryptoError::UnsupportedAlgorithm);
++        }
++        let core = sha3::TurboShake128Core::new(d);
++        let mut h: sha3::TurboShake128 = CoreWrapper::from_core(core);
++        h.update(&data);
++        h.finalize_xof().read(&mut out);
++      }
++      SubtleDigestXof::TurboShake256 {
++        domain_separation, ..
++      } => {
++        use sha3::digest::core_api::CoreWrapper;
++        let d = domain_separation.unwrap_or(0x1F);
++        if !(0x01..=0x7F).contains(&d) {
++          return Err(CryptoError::UnsupportedAlgorithm);
++        }
++        let core = sha3::TurboShake256Core::new(d);
++        let mut h: sha3::TurboShake256 = CoreWrapper::from_core(core);
++        h.update(&data);
++        h.finalize_xof().read(&mut out);
++      }
++    }
++
++    Ok(Uint8Array::from(out))
++  })
++  .await??;
++
++  Ok(output)
++}
++
+ #[derive(Deserialize)]
+ #[serde(rename_all = "camelCase")]
+ pub struct WrapUnwrapKeyArg {
+diff --git a/tests/unit/webcrypto_test.ts b/tests/unit/webcrypto_test.ts
+index d47190321a47ee..aedf98e38af57a 100644
+--- a/tests/unit/webcrypto_test.ts
++++ b/tests/unit/webcrypto_test.ts
+@@ -2412,3 +2412,213 @@ Deno.test("crypto constructors throw ERR_ILLEGAL_CONSTRUCTOR", () => {
+     );
+   }
+ });
++
++// Tests for WICG "Modern Algorithms in the Web Cryptography API"
++// https://wicg.github.io/webcrypto-modern-algos/
++//
++// The lib.dom.d.ts shipped in Deno reflects the current Web Crypto IDL,
++// which does not yet include the WICG modern-algorithms additions. Until
++// those land upstream, parameter dictionaries for the new algorithms are
++// cast to AlgorithmIdentifier here.
++// deno-lint-ignore no-explicit-any
++type AnyAlg = any;
++
++Deno.test(async function chaCha20Poly1305RoundTrip() {
++  const key = await crypto.subtle.generateKey(
++    { name: "ChaCha20-Poly1305" } as AnyAlg,
++    true,
++    ["encrypt", "decrypt"],
++  ) as unknown as CryptoKey;
++  assertEquals(key.algorithm.name, "ChaCha20-Poly1305");
++  assertEquals(key.type, "secret");
++
++  const nonce = crypto.getRandomValues(new Uint8Array(12));
++  const plaintext = new TextEncoder().encode("Hello, ChaCha20-Poly1305!");
++  const aad = new TextEncoder().encode("authentic-aad");
++
++  const ciphertext = await crypto.subtle.encrypt(
++    { name: "ChaCha20-Poly1305", nonce, additionalData: aad } as AnyAlg,
++    key,
++    plaintext,
++  );
++  // Ciphertext includes the 16-byte Poly1305 tag.
++  assertEquals(ciphertext.byteLength, plaintext.byteLength + 16);
++
++  const decrypted = await crypto.subtle.decrypt(
++    { name: "ChaCha20-Poly1305", nonce, additionalData: aad } as AnyAlg,
++    key,
++    ciphertext,
++  );
++  assertEquals(new Uint8Array(decrypted), plaintext);
++});
++
++Deno.test(async function chaCha20Poly1305TamperDetected() {
++  const key = await crypto.subtle.generateKey(
++    { name: "ChaCha20-Poly1305" } as AnyAlg,
++    true,
++    ["encrypt", "decrypt"],
++  ) as unknown as CryptoKey;
++  const nonce = new Uint8Array(12);
++  const plaintext = new Uint8Array([1, 2, 3, 4]);
++  const ciphertext = new Uint8Array(
++    await crypto.subtle.encrypt(
++      { name: "ChaCha20-Poly1305", nonce } as AnyAlg,
++      key,
++      plaintext,
++    ),
++  );
++  // Flip a bit in the ciphertext to corrupt the tag.
++  ciphertext[ciphertext.length - 1] ^= 1;
++  await assertRejects(() =>
++    crypto.subtle.decrypt(
++      { name: "ChaCha20-Poly1305", nonce } as AnyAlg,
++      key,
++      ciphertext,
++    ), DOMException);
++});
++
++Deno.test(async function chaCha20Poly1305RejectsBadNonceLength() {
++  const key = await crypto.subtle.generateKey(
++    { name: "ChaCha20-Poly1305" } as AnyAlg,
++    true,
++    ["encrypt", "decrypt"],
++  ) as unknown as CryptoKey;
++  const badNonce = new Uint8Array(11); // not 12
++  await assertRejects(() =>
++    crypto.subtle.encrypt(
++      { name: "ChaCha20-Poly1305", nonce: badNonce } as AnyAlg,
++      key,
++      new Uint8Array(1),
++    ), DOMException);
++});
++
++Deno.test(async function chaCha20Poly1305ImportRawKey() {
++  const raw = new Uint8Array(32).fill(0x42);
++  const key = await crypto.subtle.importKey(
++    "raw",
++    raw,
++    { name: "ChaCha20-Poly1305" } as AnyAlg,
++    true,
++    ["encrypt", "decrypt"],
++  );
++  const exported = new Uint8Array(await crypto.subtle.exportKey("raw", key));
++  assertEquals(exported, raw);
++});
++
++Deno.test(async function hmacSha3SignVerify() {
++  for (const hash of ["SHA3-256", "SHA3-384", "SHA3-512"]) {
++    const key = await crypto.subtle.generateKey(
++      { name: "HMAC", hash },
++      true,
++      ["sign", "verify"],
++    ) as CryptoKey;
++    const data = new TextEncoder().encode("modern algorithms");
++    const sig = await crypto.subtle.sign("HMAC", key, data);
++    const ok = await crypto.subtle.verify("HMAC", key, sig, data);
++    assert(ok, `HMAC ${hash} verify`);
++  }
++});
++
++Deno.test(async function shakeDigest() {
++  const data = new Uint8Array(0);
++  // SHAKE128 of empty produces, for 256 bits:
++  // 7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26
++  // (NIST test vector)
++  const shake128 = new Uint8Array(
++    await crypto.subtle.digest(
++      { name: "SHAKE128", length: 256 } as AnyAlg,
++      data,
++    ),
++  );
++  assertEquals(shake128.length, 32);
++  assertEquals(
++    [...shake128].map((b) => b.toString(16).padStart(2, "0")).join(""),
++    "7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26",
++  );
++
++  // SHAKE256 with 512 bits.
++  const shake256 = new Uint8Array(
++    await crypto.subtle.digest(
++      { name: "SHAKE256", length: 512 } as AnyAlg,
++      data,
++    ),
++  );
++  assertEquals(shake256.length, 64);
++});
++
++Deno.test(async function cshakeDigest() {
++  // cSHAKE with empty function name and empty customization equals SHAKE.
++  const data = new TextEncoder().encode("hello");
++  const shake = new Uint8Array(
++    await crypto.subtle.digest(
++      { name: "SHAKE128", length: 128 } as AnyAlg,
++      data,
++    ),
++  );
++  const cshake = new Uint8Array(
++    await crypto.subtle.digest(
++      {
++        name: "cSHAKE128",
++        length: 128,
++        functionName: new Uint8Array(0),
++        customization: new Uint8Array(0),
++      } as AnyAlg,
++      data,
++    ),
++  );
++  assertEquals(shake, cshake);
++
++  // Non-empty customization changes the output.
++  const customized = new Uint8Array(
++    await crypto.subtle.digest(
++      {
++        name: "cSHAKE128",
++        length: 128,
++        customization: new TextEncoder().encode("Email Signature"),
++      } as AnyAlg,
++      data,
++    ),
++  );
++  assert(customized.length === 16);
++  // Must differ from plain SHAKE.
++  let differs = false;
++  for (let i = 0; i < shake.length; i++) {
++    if (shake[i] !== customized[i]) {
++      differs = true;
++      break;
++    }
++  }
++  assert(differs);
++});
++
++Deno.test(async function turboShakeDigest() {
++  const data = new TextEncoder().encode("hello");
++  const ts128 = new Uint8Array(
++    await crypto.subtle.digest(
++      { name: "TurboSHAKE128", length: 256 } as AnyAlg,
++      data,
++    ),
++  );
++  assertEquals(ts128.length, 32);
++
++  // Different domain separation byte produces different output.
++  const ts128Alt = new Uint8Array(
++    await crypto.subtle.digest(
++      {
++        name: "TurboSHAKE128",
++        length: 256,
++        domainSeparation: 0x06,
++      } as AnyAlg,
++      data,
++    ),
++  );
++  assert(ts128.length === ts128Alt.length);
++  let differs = false;
++  for (let i = 0; i < ts128.length; i++) {
++    if (ts128[i] !== ts128Alt[i]) {
++      differs = true;
++      break;
++    }
++  }
++  assert(differs);
++});

@@ -1,0 +1,489 @@
+[
+  {
+    "url": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3287600042",
+    "pull_request_review_id": 4344550671,
+    "id": 3287600042,
+    "node_id": "PRRC_kwDOC7lts87D9Muq",
+    "diff_hunk": "",
+    "path": "crates/tauri-bundler/src/bundle/windows/nsis/mod.rs",
+    "commit_id": "bea3d5f9aa08ab6887c6e9fbea5d57636757db1a",
+    "original_commit_id": "bea3d5f9aa08ab6887c6e9fbea5d57636757db1a",
+    "user": {
+      "login": "Legend-Master",
+      "id": 68118705,
+      "node_id": "MDQ6VXNlcjY4MTE4NzA1",
+      "avatar_url": "https://avatars.githubusercontent.com/u/68118705?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/Legend-Master",
+      "html_url": "https://github.com/Legend-Master",
+      "followers_url": "https://api.github.com/users/Legend-Master/followers",
+      "following_url": "https://api.github.com/users/Legend-Master/following{/other_user}",
+      "gists_url": "https://api.github.com/users/Legend-Master/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/Legend-Master/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/Legend-Master/subscriptions",
+      "organizations_url": "https://api.github.com/users/Legend-Master/orgs",
+      "repos_url": "https://api.github.com/users/Legend-Master/repos",
+      "events_url": "https://api.github.com/users/Legend-Master/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/Legend-Master/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "Actually, didn't we already set this path for `!addplugindir`?",
+    "created_at": "2026-05-22T10:05:57Z",
+    "updated_at": "2026-05-22T10:05:57Z",
+    "html_url": "https://github.com/tauri-apps/tauri/pull/15422#discussion_r3287600042",
+    "pull_request_url": "https://api.github.com/repos/tauri-apps/tauri/pulls/15422",
+    "_links": {
+      "self": {
+        "href": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3287600042"
+      },
+      "html": {
+        "href": "https://github.com/tauri-apps/tauri/pull/15422#discussion_r3287600042"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/tauri-apps/tauri/pulls/15422"
+      }
+    },
+    "reactions": {
+      "url": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3287600042/reactions",
+      "total_count": 0,
+      "+1": 0,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 0
+    },
+    "start_line": null,
+    "original_start_line": null,
+    "start_side": null,
+    "line": 280,
+    "original_line": 280,
+    "side": "RIGHT",
+    "author_association": "CONTRIBUTOR",
+    "original_position": 1,
+    "position": 1,
+    "subject_type": "line"
+  },
+  {
+    "url": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3287822155",
+    "pull_request_review_id": 4344794378,
+    "id": 3287822155,
+    "node_id": "PRRC_kwDOC7lts87D-C9L",
+    "diff_hunk": "",
+    "path": "crates/tauri-bundler/src/bundle/windows/nsis/mod.rs",
+    "commit_id": "bea3d5f9aa08ab6887c6e9fbea5d57636757db1a",
+    "original_commit_id": "bea3d5f9aa08ab6887c6e9fbea5d57636757db1a",
+    "user": {
+      "login": "koki-develop",
+      "id": 47014617,
+      "node_id": "MDQ6VXNlcjQ3MDE0NjE3",
+      "avatar_url": "https://avatars.githubusercontent.com/u/47014617?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/koki-develop",
+      "html_url": "https://github.com/koki-develop",
+      "followers_url": "https://api.github.com/users/koki-develop/followers",
+      "following_url": "https://api.github.com/users/koki-develop/following{/other_user}",
+      "gists_url": "https://api.github.com/users/koki-develop/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/koki-develop/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/koki-develop/subscriptions",
+      "organizations_url": "https://api.github.com/users/koki-develop/orgs",
+      "repos_url": "https://api.github.com/users/koki-develop/repos",
+      "events_url": "https://api.github.com/users/koki-develop/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/koki-develop/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "@Legend-Master The existing `additional_plugins_path` and the new `signed_plugins_path` resolve to **different directories**.\r\n\r\nWhen signing is enabled, the bundler copies plugins into two separate locations:\r\n\r\n| Variable | Resolved path | Contents |\r\n|---|---|---|\r\n| `additional_plugins_path` (existing) | `<output>/Plugins/x86-unicode/additional/` | `nsis_tauri_utils.dll` only |\r\n| `signed_plugins_path` (new) | `<output>/Plugins/x86-unicode/` | stock plugins (`NSISdl` / `StartMenu` / `System` / `nsDialogs`) |\r\n\r\nhttps://github.com/tauri-apps/tauri/blob/41fdca7d1991cf4b4b69a5a758a5371333218487/crates/tauri-bundler/src/bundle/windows/nsis/mod.rs#L201\r\nhttps://github.com/tauri-apps/tauri/blob/41fdca7d1991cf4b4b69a5a758a5371333218487/crates/tauri-bundler/src/bundle/windows/nsis/mod.rs#L244-L260\r\n\r\nThe stock plugins live **one level above** where `additional_plugins_path` points, so the existing `!addplugindir` doesn't cover them.",
+    "created_at": "2026-05-22T10:49:59Z",
+    "updated_at": "2026-05-22T10:54:34Z",
+    "html_url": "https://github.com/tauri-apps/tauri/pull/15422#discussion_r3287822155",
+    "pull_request_url": "https://api.github.com/repos/tauri-apps/tauri/pulls/15422",
+    "_links": {
+      "self": {
+        "href": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3287822155"
+      },
+      "html": {
+        "href": "https://github.com/tauri-apps/tauri/pull/15422#discussion_r3287822155"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/tauri-apps/tauri/pulls/15422"
+      }
+    },
+    "reactions": {
+      "url": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3287822155/reactions",
+      "total_count": 1,
+      "+1": 1,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 0
+    },
+    "start_line": null,
+    "original_start_line": null,
+    "start_side": null,
+    "line": 280,
+    "original_line": 280,
+    "side": "RIGHT",
+    "in_reply_to_id": 3287600042,
+    "author_association": "CONTRIBUTOR",
+    "original_position": 1,
+    "position": 1,
+    "subject_type": "line"
+  },
+  {
+    "url": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3288222364",
+    "pull_request_review_id": 4345248545,
+    "id": 3288222364,
+    "node_id": "PRRC_kwDOC7lts87D_kqc",
+    "diff_hunk": "@@ -282,6 +282,13 @@ fn build_nsis_app_installer(\n     to_json(&additional_plugins_path),\n   );\n \n+  if let Some(plugin_copy_path) = &maybe_plugin_copy_path {\n+    data.insert(\n+      \"signed_plugins_path\",\n+      to_json(plugin_copy_path.join(\"x86-unicode\")),",
+    "path": "crates/tauri-bundler/src/bundle/windows/nsis/mod.rs",
+    "commit_id": "8cf1e5377ba9a6b8492c3be6cf37200500e0651e",
+    "original_commit_id": "bea3d5f9aa08ab6887c6e9fbea5d57636757db1a",
+    "user": {
+      "login": "Legend-Master",
+      "id": 68118705,
+      "node_id": "MDQ6VXNlcjY4MTE4NzA1",
+      "avatar_url": "https://avatars.githubusercontent.com/u/68118705?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/Legend-Master",
+      "html_url": "https://github.com/Legend-Master",
+      "followers_url": "https://api.github.com/users/Legend-Master/followers",
+      "following_url": "https://api.github.com/users/Legend-Master/following{/other_user}",
+      "gists_url": "https://api.github.com/users/Legend-Master/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/Legend-Master/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/Legend-Master/subscriptions",
+      "organizations_url": "https://api.github.com/users/Legend-Master/orgs",
+      "repos_url": "https://api.github.com/users/Legend-Master/repos",
+      "events_url": "https://api.github.com/users/Legend-Master/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/Legend-Master/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "This seems to give me an error here 🤔\n\n> Plugin command System::Call conflicts with a plugin in another directory!",
+    "created_at": "2026-05-22T12:06:53Z",
+    "updated_at": "2026-05-22T12:06:53Z",
+    "html_url": "https://github.com/tauri-apps/tauri/pull/15422#discussion_r3288222364",
+    "pull_request_url": "https://api.github.com/repos/tauri-apps/tauri/pulls/15422",
+    "_links": {
+      "self": {
+        "href": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3288222364"
+      },
+      "html": {
+        "href": "https://github.com/tauri-apps/tauri/pull/15422#discussion_r3288222364"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/tauri-apps/tauri/pulls/15422"
+      }
+    },
+    "reactions": {
+      "url": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3288222364/reactions",
+      "total_count": 1,
+      "+1": 0,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 1
+    },
+    "start_line": null,
+    "original_start_line": null,
+    "start_side": null,
+    "line": 288,
+    "original_line": 288,
+    "side": "RIGHT",
+    "author_association": "CONTRIBUTOR",
+    "original_position": 7,
+    "position": 7,
+    "subject_type": "line"
+  },
+  {
+    "url": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3288878872",
+    "pull_request_review_id": 4346057745,
+    "id": 3288878872,
+    "node_id": "PRRC_kwDOC7lts87ECE8Y",
+    "diff_hunk": "@@ -282,6 +282,13 @@ fn build_nsis_app_installer(\n     to_json(&additional_plugins_path),\n   );\n \n+  if let Some(plugin_copy_path) = &maybe_plugin_copy_path {\n+    data.insert(\n+      \"signed_plugins_path\",\n+      to_json(plugin_copy_path.join(\"x86-unicode\")),",
+    "path": "crates/tauri-bundler/src/bundle/windows/nsis/mod.rs",
+    "commit_id": "8cf1e5377ba9a6b8492c3be6cf37200500e0651e",
+    "original_commit_id": "bea3d5f9aa08ab6887c6e9fbea5d57636757db1a",
+    "user": {
+      "login": "koki-develop",
+      "id": 47014617,
+      "node_id": "MDQ6VXNlcjQ3MDE0NjE3",
+      "avatar_url": "https://avatars.githubusercontent.com/u/47014617?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/koki-develop",
+      "html_url": "https://github.com/koki-develop",
+      "followers_url": "https://api.github.com/users/koki-develop/followers",
+      "following_url": "https://api.github.com/users/koki-develop/following{/other_user}",
+      "gists_url": "https://api.github.com/users/koki-develop/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/koki-develop/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/koki-develop/subscriptions",
+      "organizations_url": "https://api.github.com/users/koki-develop/orgs",
+      "repos_url": "https://api.github.com/users/koki-develop/repos",
+      "events_url": "https://api.github.com/users/koki-develop/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/koki-develop/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "@Legend-Master Hmm - for what it's worth, in my own project the signing flow does work end-to-end with this fork (on `windows-latest` via GitHub Actions).\r\n\r\nI also dug into the NSIS source, and as far as I can tell, the current PR shouldn't actually be able to hit the conflict path. Sharing my trace below.\r\n\r\n---\r\n\r\nThe `Plugin command ... conflicts with a plugin in another directory!` error only fires when the DLL name is in makensis' internal `m_dllname_conflicts` set.\r\n\r\nhttps://github.com/NSIS-Dev/nsis/blob/d20198c805a603b2e6359458152987f49f3637cd/Source/script.cpp#L5079-L5083\r\nhttps://github.com/NSIS-Dev/nsis/blob/d20198c805a603b2e6359458152987f49f3637cd/Source/Plugins.cpp#L246\r\n\r\nThe only place that inserts into that set is `GetExports` in `Plugins.cpp`,\r\n\r\nhttps://github.com/NSIS-Dev/nsis/blob/d20198c805a603b2e6359458152987f49f3637cd/Source/Plugins.cpp#L151\r\n\r\nand its condition is `DllHasDataHandle(dllName) == true` - i.e. that DLL has already been assigned a data handle from a previous plugin command. The handle itself only gets set by `SetDllDataHandle`, which is only called from `TOK__PLUGINCOMMAND` processing:\r\n\r\nhttps://github.com/NSIS-Dev/nsis/blob/d20198c805a603b2e6359458152987f49f3637cd/Source/script.cpp#L5117\r\n\r\nSo the necessary order for the conflict error to fire is **\"a plugin call (e.g. `System::Call`) is processed first → then a `!addplugindir` for a directory containing the same DLL is parsed\"**.\r\n\r\n---\r\n\r\nIf I walk through the `installer.nsi` this PR generates and watch the order in which `!addplugindir` and `System::Call` actually appear:\r\n\r\nhttps://github.com/koki-develop/tauri/blob/bea3d5f9aa08ab6887c6e9fbea5d57636757db1a/crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi#L16-L29\r\n\r\n1. None of the `!include`s above the new `!addplugindir` emit anything on their own - the `System::Call`s inside them all live within `!macro` definitions, which are just stored as templates until they get expanded by `${MacroName}` or `!insertmacro`. The same applies to tauri's own `utils.nsh` / `FileAssociation.nsh`:\r\n\r\nhttps://github.com/koki-develop/tauri/blob/bea3d5f9aa08ab6887c6e9fbea5d57636757db1a/crates/tauri-bundler/src/bundle/windows/nsis/utils.nsh#L22-L71\r\n\r\nhttps://github.com/koki-develop/tauri/blob/bea3d5f9aa08ab6887c6e9fbea5d57636757db1a/crates/tauri-bundler/src/bundle/windows/nsis/FileAssociation.nsh#L131-L135\r\n\r\n2. The new `!addplugindir` runs - at this point no DLL has a data handle yet, so nothing gets added to `m_dllname_conflicts`.\r\n\r\n3. `${StrCase}` is expanded, and that's where the very first `System::Call` actually appears in the script (this is also when `System`'s data handle gets set):\r\n\r\nhttps://github.com/NSIS-Dev/nsis/blob/d20198c805a603b2e6359458152987f49f3637cd/Include/StrFunc.nsh#L158-L201\r\n\r\n4. After that, the only other `!addplugindir` in the script is the existing one at L94 (`${ADDITIONALPLUGINSPATH}`). That directory only contains `nsis_tauri_utils.dll`, and the only DLL with a data handle so far is `System` (not `nsis_tauri_utils`), so this one doesn't insert into `m_dllname_conflicts` either.\r\n\r\nhttps://github.com/koki-develop/tauri/blob/bea3d5f9aa08ab6887c6e9fbea5d57636757db1a/crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi#L93-L94\r\n\r\nhttps://github.com/koki-develop/tauri/blob/bea3d5f9aa08ab6887c6e9fbea5d57636757db1a/crates/tauri-bundler/src/bundle/windows/nsis/mod.rs#L46-L61\r\n\r\n---\r\n\r\nSo as far as I can see, there's no point in the generated `installer.nsi` where the conflict condition would actually be satisfied.\r\n\r\nIf possible, could you share the few log lines right before `Plugin command System::Call conflicts ...` fires (ideally with the `.nsi:NNN` line reference)? That'd help pinpoint which `System::Call` is the one triggering it. Also - are you using a custom template by any chance?",
+    "created_at": "2026-05-22T13:55:04Z",
+    "updated_at": "2026-05-22T13:55:04Z",
+    "html_url": "https://github.com/tauri-apps/tauri/pull/15422#discussion_r3288878872",
+    "pull_request_url": "https://api.github.com/repos/tauri-apps/tauri/pulls/15422",
+    "_links": {
+      "self": {
+        "href": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3288878872"
+      },
+      "html": {
+        "href": "https://github.com/tauri-apps/tauri/pull/15422#discussion_r3288878872"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/tauri-apps/tauri/pulls/15422"
+      }
+    },
+    "reactions": {
+      "url": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3288878872/reactions",
+      "total_count": 0,
+      "+1": 0,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 0
+    },
+    "start_line": null,
+    "original_start_line": null,
+    "start_side": null,
+    "line": 288,
+    "original_line": 288,
+    "side": "RIGHT",
+    "in_reply_to_id": 3288222364,
+    "author_association": "CONTRIBUTOR",
+    "original_position": 7,
+    "position": 7,
+    "subject_type": "line"
+  },
+  {
+    "url": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3289231459",
+    "pull_request_review_id": 4346461320,
+    "id": 3289231459,
+    "node_id": "PRRC_kwDOC7lts87EDbBj",
+    "diff_hunk": "@@ -282,6 +282,13 @@ fn build_nsis_app_installer(\n     to_json(&additional_plugins_path),\n   );\n \n+  if let Some(plugin_copy_path) = &maybe_plugin_copy_path {\n+    data.insert(\n+      \"signed_plugins_path\",\n+      to_json(plugin_copy_path.join(\"x86-unicode\")),",
+    "path": "crates/tauri-bundler/src/bundle/windows/nsis/mod.rs",
+    "commit_id": "8cf1e5377ba9a6b8492c3be6cf37200500e0651e",
+    "original_commit_id": "bea3d5f9aa08ab6887c6e9fbea5d57636757db1a",
+    "user": {
+      "login": "Legend-Master",
+      "id": 68118705,
+      "node_id": "MDQ6VXNlcjY4MTE4NzA1",
+      "avatar_url": "https://avatars.githubusercontent.com/u/68118705?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/Legend-Master",
+      "html_url": "https://github.com/Legend-Master",
+      "followers_url": "https://api.github.com/users/Legend-Master/followers",
+      "following_url": "https://api.github.com/users/Legend-Master/following{/other_user}",
+      "gists_url": "https://api.github.com/users/Legend-Master/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/Legend-Master/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/Legend-Master/subscriptions",
+      "organizations_url": "https://api.github.com/users/Legend-Master/orgs",
+      "repos_url": "https://api.github.com/users/Legend-Master/repos",
+      "events_url": "https://api.github.com/users/Legend-Master/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/Legend-Master/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "I think I had a git stash conflict that I didn't notice that pushed the `!addplugindir` in this PR a bit lower which gave me\r\n\r\n```\r\nPlugin command System::Call conflicts with a plugin in another directory!\r\nError in macro __NSD_FreeImage on macroline 2\r\nError in macro MUI_FUNCTION_WELCOMEPAGE on macroline 50\r\nError in macro MUI_PAGEDECLARATION_WELCOME on macroline 18\r\nError in macro MUI_PAGE_WELCOME on macroline 6\r\n```\r\n\r\nIt's working now after resetting the workspace, sorry about that! Appreciate the effort digging this!",
+    "created_at": "2026-05-22T14:53:38Z",
+    "updated_at": "2026-05-22T14:53:38Z",
+    "html_url": "https://github.com/tauri-apps/tauri/pull/15422#discussion_r3289231459",
+    "pull_request_url": "https://api.github.com/repos/tauri-apps/tauri/pulls/15422",
+    "_links": {
+      "self": {
+        "href": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3289231459"
+      },
+      "html": {
+        "href": "https://github.com/tauri-apps/tauri/pull/15422#discussion_r3289231459"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/tauri-apps/tauri/pulls/15422"
+      }
+    },
+    "reactions": {
+      "url": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3289231459/reactions",
+      "total_count": 1,
+      "+1": 1,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 0
+    },
+    "start_line": null,
+    "original_start_line": null,
+    "start_side": null,
+    "line": 288,
+    "original_line": 288,
+    "side": "RIGHT",
+    "in_reply_to_id": 3288222364,
+    "author_association": "CONTRIBUTOR",
+    "original_position": 7,
+    "position": 7,
+    "subject_type": "line"
+  },
+  {
+    "url": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3289239624",
+    "pull_request_review_id": 4346471149,
+    "id": 3289239624,
+    "node_id": "PRRC_kwDOC7lts87EDdBI",
+    "diff_hunk": "@@ -22,6 +22,9 @@ ManifestDPIAwareness PerMonitorV2\n !include \"Win\\COM.nsh\"\n !include \"Win\\Propkey.nsh\"\n !include \"StrFunc.nsh\"\n+{{#if signed_plugins_path}}\n+!addplugindir \"{{signed_plugins_path}}\"\n+{{/if}}",
+    "path": "crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi",
+    "commit_id": "bea3d5f9aa08ab6887c6e9fbea5d57636757db1a",
+    "original_commit_id": "bea3d5f9aa08ab6887c6e9fbea5d57636757db1a",
+    "user": {
+      "login": "Legend-Master",
+      "id": 68118705,
+      "node_id": "MDQ6VXNlcjY4MTE4NzA1",
+      "avatar_url": "https://avatars.githubusercontent.com/u/68118705?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/Legend-Master",
+      "html_url": "https://github.com/Legend-Master",
+      "followers_url": "https://api.github.com/users/Legend-Master/followers",
+      "following_url": "https://api.github.com/users/Legend-Master/following{/other_user}",
+      "gists_url": "https://api.github.com/users/Legend-Master/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/Legend-Master/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/Legend-Master/subscriptions",
+      "organizations_url": "https://api.github.com/users/Legend-Master/orgs",
+      "repos_url": "https://api.github.com/users/Legend-Master/repos",
+      "events_url": "https://api.github.com/users/Legend-Master/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/Legend-Master/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "Since I just hit https://github.com/tauri-apps/tauri/pull/15422#discussion_r3289231459, let's move this block to above all the `!include` calls, and add a little comment on this must be before any actual code",
+    "created_at": "2026-05-22T14:55:00Z",
+    "updated_at": "2026-05-22T14:56:57Z",
+    "html_url": "https://github.com/tauri-apps/tauri/pull/15422#discussion_r3289239624",
+    "pull_request_url": "https://api.github.com/repos/tauri-apps/tauri/pulls/15422",
+    "_links": {
+      "self": {
+        "href": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3289239624"
+      },
+      "html": {
+        "href": "https://github.com/tauri-apps/tauri/pull/15422#discussion_r3289239624"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/tauri-apps/tauri/pulls/15422"
+      }
+    },
+    "reactions": {
+      "url": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3289239624/reactions",
+      "total_count": 1,
+      "+1": 1,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 0
+    },
+    "start_line": null,
+    "original_start_line": 25,
+    "start_side": "RIGHT",
+    "line": null,
+    "original_line": 27,
+    "side": "RIGHT",
+    "author_association": "CONTRIBUTOR",
+    "original_position": 6,
+    "position": 1,
+    "subject_type": "line"
+  },
+  {
+    "url": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3291677416",
+    "pull_request_review_id": 4349324838,
+    "id": 3291677416,
+    "node_id": "PRRC_kwDOC7lts87EMwLo",
+    "diff_hunk": "@@ -22,6 +22,9 @@ ManifestDPIAwareness PerMonitorV2\n !include \"Win\\COM.nsh\"\n !include \"Win\\Propkey.nsh\"\n !include \"StrFunc.nsh\"\n+{{#if signed_plugins_path}}\n+!addplugindir \"{{signed_plugins_path}}\"\n+{{/if}}",
+    "path": "crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi",
+    "commit_id": "bea3d5f9aa08ab6887c6e9fbea5d57636757db1a",
+    "original_commit_id": "bea3d5f9aa08ab6887c6e9fbea5d57636757db1a",
+    "user": {
+      "login": "koki-develop",
+      "id": 47014617,
+      "node_id": "MDQ6VXNlcjQ3MDE0NjE3",
+      "avatar_url": "https://avatars.githubusercontent.com/u/47014617?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/koki-develop",
+      "html_url": "https://github.com/koki-develop",
+      "followers_url": "https://api.github.com/users/koki-develop/followers",
+      "following_url": "https://api.github.com/users/koki-develop/following{/other_user}",
+      "gists_url": "https://api.github.com/users/koki-develop/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/koki-develop/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/koki-develop/subscriptions",
+      "organizations_url": "https://api.github.com/users/koki-develop/orgs",
+      "repos_url": "https://api.github.com/users/koki-develop/repos",
+      "events_url": "https://api.github.com/users/koki-develop/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/koki-develop/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "@Legend-Master \r\nDone in 8cf1e53. \r\nPlease feel free to adjust the wording if anything feels off!",
+    "created_at": "2026-05-23T00:03:50Z",
+    "updated_at": "2026-05-23T00:03:51Z",
+    "html_url": "https://github.com/tauri-apps/tauri/pull/15422#discussion_r3291677416",
+    "pull_request_url": "https://api.github.com/repos/tauri-apps/tauri/pulls/15422",
+    "_links": {
+      "self": {
+        "href": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3291677416"
+      },
+      "html": {
+        "href": "https://github.com/tauri-apps/tauri/pull/15422#discussion_r3291677416"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/tauri-apps/tauri/pulls/15422"
+      }
+    },
+    "reactions": {
+      "url": "https://api.github.com/repos/tauri-apps/tauri/pulls/comments/3291677416/reactions",
+      "total_count": 0,
+      "+1": 0,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 0
+    },
+    "start_line": null,
+    "original_start_line": 25,
+    "start_side": "RIGHT",
+    "line": null,
+    "original_line": 27,
+    "side": "RIGHT",
+    "in_reply_to_id": 3289239624,
+    "author_association": "CONTRIBUTOR",
+    "original_position": 6,
+    "position": 1,
+    "subject_type": "line"
+  }
+]

@@ -1,0 +1,122 @@
+[
+  {
+    "id": 4370922771,
+    "node_id": "PRR_kwDOB_QrUM8AAAABBIb9Ew",
+    "user": {
+      "login": "littledivy",
+      "id": 34997667,
+      "node_id": "MDQ6VXNlcjM0OTk3NjY3",
+      "avatar_url": "https://avatars.githubusercontent.com/u/34997667?u=5d6207c1a153251998ba24326e45626788e6c1b4&v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/littledivy",
+      "html_url": "https://github.com/littledivy",
+      "followers_url": "https://api.github.com/users/littledivy/followers",
+      "following_url": "https://api.github.com/users/littledivy/following{/other_user}",
+      "gists_url": "https://api.github.com/users/littledivy/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/littledivy/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/littledivy/subscriptions",
+      "organizations_url": "https://api.github.com/users/littledivy/orgs",
+      "repos_url": "https://api.github.com/users/littledivy/repos",
+      "events_url": "https://api.github.com/users/littledivy/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/littledivy/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "Any WPT tests we can enable?",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/denoland/deno/pull/34417#pullrequestreview-4370922771",
+    "pull_request_url": "https://api.github.com/repos/denoland/deno/pulls/34417",
+    "author_association": "MEMBER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/denoland/deno/pull/34417#pullrequestreview-4370922771"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/denoland/deno/pulls/34417"
+      }
+    },
+    "submitted_at": "2026-05-27T08:57:27Z",
+    "commit_id": "57a2de5801fe8fc7eeadf4a32446cf06fb2b4fdf"
+  },
+  {
+    "id": 4372947136,
+    "node_id": "PRR_kwDOB_QrUM8AAAABBKXgwA",
+    "user": {
+      "login": "littledivy",
+      "id": 34997667,
+      "node_id": "MDQ6VXNlcjM0OTk3NjY3",
+      "avatar_url": "https://avatars.githubusercontent.com/u/34997667?u=5d6207c1a153251998ba24326e45626788e6c1b4&v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/littledivy",
+      "html_url": "https://github.com/littledivy",
+      "followers_url": "https://api.github.com/users/littledivy/followers",
+      "following_url": "https://api.github.com/users/littledivy/following{/other_user}",
+      "gists_url": "https://api.github.com/users/littledivy/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/littledivy/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/littledivy/subscriptions",
+      "organizations_url": "https://api.github.com/users/littledivy/orgs",
+      "repos_url": "https://api.github.com/users/littledivy/repos",
+      "events_url": "https://api.github.com/users/littledivy/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/littledivy/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "LGTM. Open issues about the follow ups",
+    "state": "APPROVED",
+    "html_url": "https://github.com/denoland/deno/pull/34417#pullrequestreview-4372947136",
+    "pull_request_url": "https://api.github.com/repos/denoland/deno/pulls/34417",
+    "author_association": "MEMBER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/denoland/deno/pull/34417#pullrequestreview-4372947136"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/denoland/deno/pulls/34417"
+      }
+    },
+    "submitted_at": "2026-05-27T13:58:21Z",
+    "commit_id": "57a2de5801fe8fc7eeadf4a32446cf06fb2b4fdf"
+  },
+  {
+    "id": 4373481009,
+    "node_id": "PRR_kwDOB_QrUM8AAAABBK4GMQ",
+    "user": {
+      "login": "littledivy",
+      "id": 34997667,
+      "node_id": "MDQ6VXNlcjM0OTk3NjY3",
+      "avatar_url": "https://avatars.githubusercontent.com/u/34997667?u=5d6207c1a153251998ba24326e45626788e6c1b4&v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/littledivy",
+      "html_url": "https://github.com/littledivy",
+      "followers_url": "https://api.github.com/users/littledivy/followers",
+      "following_url": "https://api.github.com/users/littledivy/following{/other_user}",
+      "gists_url": "https://api.github.com/users/littledivy/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/littledivy/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/littledivy/subscriptions",
+      "organizations_url": "https://api.github.com/users/littledivy/orgs",
+      "repos_url": "https://api.github.com/users/littledivy/repos",
+      "events_url": "https://api.github.com/users/littledivy/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/littledivy/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "APPROVED",
+    "html_url": "https://github.com/denoland/deno/pull/34417#pullrequestreview-4373481009",
+    "pull_request_url": "https://api.github.com/repos/denoland/deno/pulls/34417",
+    "author_association": "MEMBER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/denoland/deno/pull/34417#pullrequestreview-4373481009"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/denoland/deno/pulls/34417"
+      }
+    },
+    "submitted_at": "2026-05-27T15:02:37Z",
+    "commit_id": "57a2de5801fe8fc7eeadf4a32446cf06fb2b4fdf"
+  }
+]
