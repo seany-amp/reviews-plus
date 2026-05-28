@@ -1,10 +1,11 @@
-import { useEffect, useRef, useMemo } from 'react'
+import { useEffect, useRef, useMemo, useState, useCallback } from 'react'
 import {
   usePRMetadata,
   usePRDiff,
   usePRFiles,
   usePRReviews,
   usePRComments,
+  usePostComment,
 } from '@/lib/github'
 import { parsePatchFiles, FileDiff, preloadHighlighter } from '@pierre/diffs'
 import type {
@@ -14,6 +15,34 @@ import type {
 } from '@pierre/diffs'
 import type { PRIdentifier } from '@/lib/github/parse-url'
 import type { PRMetadata, PRReview, PRComment } from '@/lib/github/types'
+import { toast } from 'sonner'
+
+interface ActiveComment {
+  file: string
+  line: number
+  side: 'additions' | 'deletions'
+}
+
+interface CommentFormMarker {
+  _type: 'comment-form'
+  file: string
+  line: number
+  side: 'additions' | 'deletions'
+}
+
+interface ReplyFormMarker {
+  _type: 'reply-form'
+  parentId: number
+  file: string
+  line: number
+  side: 'additions' | 'deletions'
+}
+
+interface AnnotationPayload {
+  comment?: PRComment
+  form?: CommentFormMarker
+  reply?: ReplyFormMarker
+}
 
 interface ReviewViewProps {
   pr: PRIdentifier | null
@@ -57,6 +86,89 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   const files = usePRFiles(owner, repo, number)
   const reviews = usePRReviews(owner, repo, number)
   const comments = usePRComments(owner, repo, number)
+  const postComment = usePostComment(owner, repo, number)
+
+  const [activeComment, setActiveComment] = useState<ActiveComment | null>(null)
+  const [activeReply, setActiveReply] = useState<{
+    file: string
+    line: number
+    side: 'additions' | 'deletions'
+    parentId: number
+  } | null>(null)
+
+  const handleStartComment = useCallback(
+    (file: string, line: number, side: 'additions' | 'deletions') => {
+      setActiveReply(null)
+      setActiveComment({ file, line, side })
+    },
+    [],
+  )
+
+  const handleStartReply = useCallback(
+    (file: string, line: number, side: 'additions' | 'deletions', parentId: number) => {
+      setActiveComment(null)
+      setActiveReply({ file, line, side, parentId })
+    },
+    [],
+  )
+
+  const handleCancelComment = useCallback(() => {
+    setActiveComment(null)
+    setActiveReply(null)
+  }, [])
+
+  const handleSubmitComment = useCallback(
+    (body: string, path: string, line: number, side: 'additions' | 'deletions') => {
+      if (!metadata.data) return
+      const ghSide = side === 'deletions' ? 'LEFT' : 'RIGHT'
+      postComment.mutate(
+        {
+          body,
+          path,
+          line,
+          commit_id: metadata.data.head.sha,
+          side: ghSide,
+        },
+        {
+          onSuccess: () => {
+            setActiveComment(null)
+            toast.success('Comment posted')
+          },
+          onError: (err) => {
+            toast.error(`Failed to post comment: ${err.message}`)
+          },
+        },
+      )
+    },
+    [metadata.data, postComment],
+  )
+
+  const handleSubmitReply = useCallback(
+    (body: string, path: string, line: number, side: 'additions' | 'deletions', parentId: number) => {
+      if (!metadata.data) return
+      const ghSide = side === 'deletions' ? 'LEFT' : 'RIGHT'
+      postComment.mutate(
+        {
+          body,
+          path,
+          line,
+          commit_id: metadata.data.head.sha,
+          side: ghSide,
+          in_reply_to: parentId,
+        },
+        {
+          onSuccess: () => {
+            setActiveReply(null)
+            toast.success('Reply posted')
+          },
+          onError: (err) => {
+            toast.error(`Failed to post reply: ${err.message}`)
+          },
+        },
+      )
+    },
+    [metadata.data, postComment],
+  )
 
   const parsedFiles = useMemo(() => {
     if (!diff.data) return []
@@ -104,6 +216,18 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
             key={file.name ?? i}
             metadata={file}
             comments={commentsByFile.get(file.name) ?? []}
+            activeComment={
+              activeComment?.file === file.name ? activeComment : null
+            }
+            activeReply={
+              activeReply?.file === file.name ? activeReply : null
+            }
+            onStartComment={handleStartComment}
+            onStartReply={handleStartReply}
+            onCancelComment={handleCancelComment}
+            onSubmitComment={handleSubmitComment}
+            onSubmitReply={handleSubmitReply}
+            isSubmitting={postComment.isPending}
           />
         ))}
       </div>
@@ -191,22 +315,96 @@ function ReviewBadge({ review }: { review: PRReview }) {
 
 function buildAnnotations(
   comments: PRComment[],
-): DiffLineAnnotation<PRComment>[] {
-  return comments
+  activeComment: ActiveComment | null,
+  activeReply: { file: string; line: number; side: 'additions' | 'deletions'; parentId: number } | null,
+): DiffLineAnnotation<AnnotationPayload>[] {
+  const annotations: DiffLineAnnotation<AnnotationPayload>[] = comments
     .filter((c) => c.line !== null)
     .map((comment) => ({
       side: comment.side === 'LEFT' ? 'deletions' as const : 'additions' as const,
       lineNumber: comment.line!,
-      metadata: comment,
+      metadata: { comment },
     }))
+
+  if (activeComment) {
+    annotations.push({
+      side: activeComment.side,
+      lineNumber: activeComment.line,
+      metadata: {
+        form: {
+          _type: 'comment-form',
+          file: activeComment.file,
+          line: activeComment.line,
+          side: activeComment.side,
+        },
+      },
+    })
+  }
+
+  if (activeReply) {
+    annotations.push({
+      side: activeReply.side,
+      lineNumber: activeReply.line,
+      metadata: {
+        reply: {
+          _type: 'reply-form',
+          parentId: activeReply.parentId,
+          file: activeReply.file,
+          line: activeReply.line,
+          side: activeReply.side,
+        },
+      },
+    })
+  }
+
+  return annotations
 }
 
-function renderCommentAnnotation(
-  annotation: DiffLineAnnotation<PRComment>,
-): HTMLElement | undefined {
-  const comment = annotation.metadata
-  if (!comment) return undefined
+function createAnnotationRenderer(callbacks: {
+  onSubmitComment: (body: string, path: string, line: number, side: 'additions' | 'deletions') => void
+  onSubmitReply: (body: string, path: string, line: number, side: 'additions' | 'deletions', parentId: number) => void
+  onCancel: () => void
+  onStartReply: (file: string, line: number, side: 'additions' | 'deletions', parentId: number) => void
+  isSubmitting: boolean
+}) {
+  return function renderAnnotation(
+    annotation: DiffLineAnnotation<AnnotationPayload>,
+  ): HTMLElement | undefined {
+    const payload = annotation.metadata
+    if (!payload) return undefined
 
+    if (payload.form) {
+      const { form } = payload
+      return createCommentForm({
+        onSubmit: (body) => callbacks.onSubmitComment(body, form.file, form.line, form.side),
+        onCancel: callbacks.onCancel,
+        isSubmitting: callbacks.isSubmitting,
+        placeholder: 'Add a comment...',
+      })
+    }
+
+    if (payload.reply) {
+      const { reply } = payload
+      return createCommentForm({
+        onSubmit: (body) => callbacks.onSubmitReply(body, reply.file, reply.line, reply.side, reply.parentId),
+        onCancel: callbacks.onCancel,
+        isSubmitting: callbacks.isSubmitting,
+        placeholder: 'Reply...',
+      })
+    }
+
+    if (payload.comment) {
+      return renderExistingComment(payload.comment, callbacks.onStartReply)
+    }
+
+    return undefined
+  }
+}
+
+function renderExistingComment(
+  comment: PRComment,
+  onStartReply: (file: string, line: number, side: 'additions' | 'deletions', parentId: number) => void,
+): HTMLElement {
   const wrapper = document.createElement('div')
   wrapper.style.padding = '8px 12px'
   wrapper.style.margin = '4px 0'
@@ -253,6 +451,75 @@ function renderCommentAnnotation(
   body.style.whiteSpace = 'pre-wrap'
   wrapper.appendChild(body)
 
+  if (!comment.in_reply_to_id) {
+    const replyBtn = document.createElement('button')
+    replyBtn.textContent = 'Reply'
+    replyBtn.className = 'diffs-reply-btn'
+    replyBtn.onclick = (e) => {
+      e.stopPropagation()
+      const side = comment.side === 'LEFT' ? 'deletions' as const : 'additions' as const
+      onStartReply(comment.path, comment.line!, side, comment.id)
+    }
+    wrapper.appendChild(replyBtn)
+  }
+
+  return wrapper
+}
+
+function createCommentForm(options: {
+  onSubmit: (body: string) => void
+  onCancel: () => void
+  isSubmitting: boolean
+  placeholder: string
+}): HTMLElement {
+  const wrapper = document.createElement('div')
+  wrapper.className = 'diffs-comment-form'
+
+  const textarea = document.createElement('textarea')
+  textarea.placeholder = options.placeholder
+  textarea.className = 'diffs-comment-textarea'
+  textarea.rows = 3
+
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault()
+      const value = textarea.value.trim()
+      if (value) options.onSubmit(value)
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      options.onCancel()
+    }
+  })
+
+  const buttonRow = document.createElement('div')
+  buttonRow.className = 'diffs-comment-form-buttons'
+
+  const cancelBtn = document.createElement('button')
+  cancelBtn.textContent = 'Cancel'
+  cancelBtn.className = 'diffs-comment-cancel-btn'
+  cancelBtn.onclick = (e) => {
+    e.stopPropagation()
+    options.onCancel()
+  }
+
+  const submitBtn = document.createElement('button')
+  submitBtn.textContent = options.isSubmitting ? 'Posting...' : 'Comment'
+  submitBtn.className = 'diffs-comment-submit-btn'
+  submitBtn.disabled = options.isSubmitting
+  submitBtn.onclick = (e) => {
+    e.stopPropagation()
+    const value = textarea.value.trim()
+    if (value) options.onSubmit(value)
+  }
+
+  buttonRow.appendChild(cancelBtn)
+  buttonRow.appendChild(submitBtn)
+  wrapper.appendChild(textarea)
+  wrapper.appendChild(buttonRow)
+
+  requestAnimationFrame(() => textarea.focus())
+
   return wrapper
 }
 
@@ -273,25 +540,73 @@ function formatRelativeTime(dateStr: string): string {
 function DiffFile({
   metadata,
   comments,
+  activeComment,
+  activeReply,
+  onStartComment,
+  onStartReply,
+  onCancelComment,
+  onSubmitComment,
+  onSubmitReply,
+  isSubmitting,
 }: {
   metadata: FileDiffMetadata
   comments: PRComment[]
+  activeComment: ActiveComment | null
+  activeReply: { file: string; line: number; side: 'additions' | 'deletions'; parentId: number } | null
+  onStartComment: (file: string, line: number, side: 'additions' | 'deletions') => void
+  onStartReply: (file: string, line: number, side: 'additions' | 'deletions', parentId: number) => void
+  onCancelComment: () => void
+  onSubmitComment: (body: string, path: string, line: number, side: 'additions' | 'deletions') => void
+  onSubmitReply: (body: string, path: string, line: number, side: 'additions' | 'deletions', parentId: number) => void
+  isSubmitting: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const instanceRef = useRef<FileDiff<PRComment> | null>(null)
+  const instanceRef = useRef<FileDiff<AnnotationPayload> | null>(null)
+  const callbacksRef = useRef({ onStartComment, onStartReply, onCancelComment, onSubmitComment, onSubmitReply, isSubmitting })
 
-  const lineAnnotations = useMemo(() => buildAnnotations(comments), [comments])
+  callbacksRef.current = { onStartComment, onStartReply, onCancelComment, onSubmitComment, onSubmitReply, isSubmitting }
+
+  const lineAnnotations = useMemo(
+    () => buildAnnotations(comments, activeComment, activeReply),
+    [comments, activeComment, activeReply],
+  )
 
   useEffect(() => {
     if (!containerRef.current) return
 
     const themeType = getInitialThemeType()
+    const fileName = metadata.name
 
-    const instance = new FileDiff<PRComment>({
+    const renderAnnotation = createAnnotationRenderer({
+      onSubmitComment: (...args) => callbacksRef.current.onSubmitComment(...args),
+      onSubmitReply: (...args) => callbacksRef.current.onSubmitReply(...args),
+      onCancel: () => callbacksRef.current.onCancelComment(),
+      onStartReply: (...args) => callbacksRef.current.onStartReply(...args),
+      isSubmitting: callbacksRef.current.isSubmitting,
+    })
+
+    const instance = new FileDiff<AnnotationPayload>({
       theme: THEMES,
       themeType,
       diffStyle: 'split',
-      renderAnnotation: renderCommentAnnotation,
+      renderAnnotation,
+      renderGutterUtility(getHoveredRow) {
+        const btn = document.createElement('button')
+        btn.textContent = '+'
+        btn.className = 'diffs-gutter-add-comment'
+        btn.onclick = (e) => {
+          e.stopPropagation()
+          const hovered = getHoveredRow()
+          if (hovered) {
+            callbacksRef.current.onStartComment(
+              fileName,
+              hovered.lineNumber,
+              hovered.side as 'additions' | 'deletions',
+            )
+          }
+        }
+        return btn
+      },
     })
 
     instance.render({

@@ -228,3 +228,120 @@ button {
     @apply font-sans;
   }
 }
+
+/* Diff gutter add-comment button */
+.diffs-gutter-add-comment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background-color: #1f6feb;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  padding: 0;
+}
+
+*:hover > .diffs-gutter-add-comment,
+.diffs-gutter-add-comment:focus {
+  opacity: 1;
+}
+
+.diffs-gutter-add-comment:hover {
+  background-color: #388bfd;
+  opacity: 1;
+}
+
+/* Inline comment form */
+.diffs-comment-form {
+  padding: 8px 12px;
+  margin: 4px 0;
+  border-radius: 6px;
+  border: 1px solid var(--border, #d0d7de);
+  background-color: var(--card, #fff);
+}
+
+.diffs-comment-textarea {
+  width: 100%;
+  min-height: 60px;
+  padding: 8px;
+  border: 1px solid var(--border, #d0d7de);
+  border-radius: 4px;
+  background: var(--background, #fff);
+  color: var(--foreground, #1f2328);
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+}
+
+.diffs-comment-textarea:focus {
+  border-color: #1f6feb;
+  box-shadow: 0 0 0 2px rgba(31, 111, 235, 0.2);
+}
+
+.diffs-comment-form-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.diffs-comment-cancel-btn {
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border, #d0d7de);
+  background: transparent;
+  color: var(--foreground, #1f2328);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.diffs-comment-cancel-btn:hover {
+  background-color: var(--muted, #f6f8fa);
+}
+
+.diffs-comment-submit-btn {
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: none;
+  background-color: #1f883d;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.diffs-comment-submit-btn:hover {
+  background-color: #1a7f37;
+}
+
+.diffs-comment-submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Reply button on existing comments */
+.diffs-reply-btn {
+  margin-top: 6px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border, #d0d7de);
+  background: transparent;
+  color: var(--muted-foreground, #656d76);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.diffs-reply-btn:hover {
+  background-color: var(--muted, #f6f8fa);
+  color: var(--foreground, #1f2328);
+}
