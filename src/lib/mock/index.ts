@@ -25,10 +25,18 @@ const searchIssuesFixture = {
   ],
 };
 
+const userFixture = {
+  login: 'octocat',
+  id: 1,
+  avatar_url: 'https://avatars.githubusercontent.com/u/583231',
+  name: 'The Octocat',
+};
+
 const ENDPOINT_PATTERNS: Array<{
   pattern: RegExp;
   fixture: unknown;
 }> = [
+  { pattern: /^\/user$/, fixture: userFixture },
   { pattern: /\/search\/issues/, fixture: searchIssuesFixture },
   { pattern: /\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/files$/, fixture: prFiles },
   { pattern: /\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/comments$/, fixture: prComments },

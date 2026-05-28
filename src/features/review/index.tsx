@@ -16,6 +16,8 @@ import type {
 import type { PRIdentifier } from '@/lib/github/parse-url'
 import type { PRMetadata, PRReview, PRComment } from '@/lib/github/types'
 import { toast } from 'sonner'
+import { AlertTriangle, Settings } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts'
 import { FilePalette } from '@/components/file-palette'
 import { ShortcutsHelp } from '@/components/shortcuts-help'
@@ -252,15 +254,19 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   }, [comments.data])
 
   if (metadata.isLoading || diff.isLoading) {
-    return <LoadingState />
+    return <DiffLoadingSkeleton />
   }
 
   if (metadata.error || diff.error) {
+    const error = metadata.error ?? diff.error
     return (
-      <div className="text-red-500 p-4">
-        Failed to load PR data:{' '}
-        {(metadata.error ?? diff.error)?.message ?? 'Unknown error'}
-      </div>
+      <ErrorCard
+        error={error}
+        onRetry={() => {
+          metadata.refetch()
+          diff.refetch()
+        }}
+      />
     )
   }
 
@@ -721,12 +727,115 @@ function DiffFileContainer({ filename, children }: { filename: string; children:
   )
 }
 
-function LoadingState() {
+function DiffLoadingSkeleton() {
   return (
-    <div className="flex flex-col gap-4 p-4 animate-pulse">
-      <div className="h-24 bg-muted rounded-lg" />
-      <div className="h-64 bg-muted rounded" />
-      <div className="h-48 bg-muted rounded" />
+    <div className="flex flex-col gap-4 p-4">
+      {/* PR header skeleton */}
+      <div className="animate-pulse border rounded-lg p-4 bg-card">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-8 h-8 rounded-full bg-muted" />
+          <div className="flex-1 space-y-2">
+            <div className="h-5 bg-muted rounded w-2/3" />
+            <div className="h-3 bg-muted rounded w-1/3" />
+          </div>
+        </div>
+        <div className="flex gap-4">
+          <div className="h-4 bg-muted rounded w-12" />
+          <div className="h-4 bg-muted rounded w-12" />
+          <div className="h-4 bg-muted rounded w-24" />
+        </div>
+      </div>
+
+      {/* File diff skeletons */}
+      {[280, 180, 220].map((height, i) => (
+        <div key={i} className="animate-pulse border rounded overflow-hidden">
+          <div className="h-10 bg-muted/70 border-b flex items-center px-3 gap-2">
+            <div className="h-3 bg-muted rounded w-48" />
+          </div>
+          <div className="space-y-px">
+            {Array.from({ length: Math.floor(height / 24) }).map((_, j) => (
+              <div key={j} className="flex h-6">
+                <div className="w-12 bg-muted/30" />
+                <div className="flex-1 bg-muted/20 px-2 flex items-center">
+                  <div
+                    className="h-3 bg-muted/50 rounded"
+                    style={{ width: `${30 + Math.random() * 50}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function getErrorDetails(error: Error | null): {
+  message: string
+  showSettings: boolean
+  retryDelay?: string
+} {
+  const msg = error?.message ?? 'Unknown error'
+
+  if (/token.*invalid|token.*expired|unauthorized|401/i.test(msg)) {
+    return {
+      message: 'Token invalid or expired. Update your token in Settings.',
+      showSettings: true,
+    }
+  }
+
+  if (/rate.?limit|403/i.test(msg)) {
+    return {
+      message: 'Rate limited by GitHub. Try again in a few minutes.',
+      showSettings: false,
+      retryDelay: '5 minutes',
+    }
+  }
+
+  if (/not.?found|404/i.test(msg)) {
+    return {
+      message: 'PR not found. Check the URL and try again.',
+      showSettings: false,
+    }
+  }
+
+  return { message: msg, showSettings: false }
+}
+
+function ErrorCard({
+  error,
+  onRetry,
+}: {
+  error: Error | null
+  onRetry: () => void
+}) {
+  const details = getErrorDetails(error)
+
+  return (
+    <div className="flex items-center justify-center h-full p-8">
+      <div className="w-full max-w-md border rounded-lg p-6 bg-card space-y-4 text-center">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
+          <AlertTriangle className="size-6 text-destructive" />
+        </div>
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold">Failed to load PR</h2>
+          <p className="text-sm text-muted-foreground">{details.message}</p>
+        </div>
+        <div className="flex items-center justify-center gap-2">
+          <Button onClick={onRetry} variant="outline" size="sm">
+            Retry
+          </Button>
+          {details.showSettings && (
+            <Button variant="ghost" size="sm" asChild>
+              <a href="#settings">
+                <Settings className="size-4" />
+                Go to Settings
+              </a>
+            </Button>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

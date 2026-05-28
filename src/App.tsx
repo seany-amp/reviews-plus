@@ -1,8 +1,10 @@
 import { useState } from "react"
+import { GitPullRequest, List, Settings } from "lucide-react"
 import { ReviewView } from "./features/review"
 import { MyPRsView } from "./features/my-prs"
 import { SettingsView } from "./features/settings"
 import { PRUrlInput } from "./components/pr-url-input"
+import { Button } from "./components/ui/button"
 import type { PRIdentifier } from "./lib/github/parse-url"
 
 type View = "review" | "my-prs" | "settings"
@@ -18,28 +20,36 @@ function App() {
 
   return (
     <div className="flex flex-col h-screen">
-      <PRUrlInput onNavigate={handleNavigate} />
-      <nav className="flex gap-2 p-2 border-b">
-        <button
-          className={view === "review" ? "font-bold" : ""}
-          onClick={() => setView("review")}
-        >
-          Review
-        </button>
-        <button
-          className={view === "my-prs" ? "font-bold" : ""}
-          onClick={() => setView("my-prs")}
-        >
-          My PRs
-        </button>
-        <button
-          className={view === "settings" ? "font-bold" : ""}
-          onClick={() => setView("settings")}
-        >
-          Settings
-        </button>
-      </nav>
-      <main className="flex-1 p-4">
+      <div className="sticky top-0 z-10 bg-background">
+        <PRUrlInput onNavigate={handleNavigate} />
+        <nav className="flex gap-1 p-2 border-b">
+          <Button
+            variant={view === "review" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setView("review")}
+          >
+            <GitPullRequest className="size-4" />
+            Review
+          </Button>
+          <Button
+            variant={view === "my-prs" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setView("my-prs")}
+          >
+            <List className="size-4" />
+            My PRs
+          </Button>
+          <Button
+            variant={view === "settings" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setView("settings")}
+          >
+            <Settings className="size-4" />
+            Settings
+          </Button>
+        </nav>
+      </div>
+      <main className="flex-1 overflow-y-auto p-4">
         {view === "review" && <ReviewView pr={currentPR} />}
         {view === "my-prs" && <MyPRsView onOpenPR={handleNavigate} />}
         {view === "settings" && <SettingsView />}

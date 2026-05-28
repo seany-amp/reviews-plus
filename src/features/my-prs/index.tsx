@@ -1,4 +1,6 @@
 import { useMyPRs } from '@/lib/github/queries'
+import { AlertTriangle } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import type { PRIdentifier } from '@/lib/github/parse-url'
 import type { SearchIssueItem } from '@/lib/github/types'
 
@@ -26,17 +28,38 @@ interface MyPRsViewProps {
 }
 
 export function MyPRsView({ onOpenPR }: MyPRsViewProps) {
-  const { data, isLoading } = useMyPRs()
+  const { data, isLoading, error, refetch } = useMyPRs()
 
   if (isLoading) {
     return (
       <div className="space-y-3">
-        {Array.from({ length: 3 }).map((_, i) => (
+        {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="animate-pulse py-3 border-b">
             <div className="h-4 bg-muted rounded w-3/4 mb-2" />
-            <div className="h-3 bg-muted rounded w-1/3" />
+            <div className="flex gap-3">
+              <div className="h-3 bg-muted rounded w-24" />
+              <div className="h-3 bg-muted rounded w-20" />
+              <div className="h-3 bg-muted rounded w-16" />
+            </div>
           </div>
         ))}
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 gap-4">
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
+          <AlertTriangle className="size-6 text-destructive" />
+        </div>
+        <div className="text-center space-y-1">
+          <p className="text-sm font-medium">Failed to load PRs</p>
+          <p className="text-sm text-muted-foreground">{error.message}</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => refetch()}>
+          Retry
+        </Button>
       </div>
     )
   }

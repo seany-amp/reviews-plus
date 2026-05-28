@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Eye, EyeOff, KeyRound, Trash2 } from 'lucide-react'
+import { Eye, EyeOff, KeyRound, Trash2, CheckCircle2, XCircle, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,6 +18,8 @@ export function SettingsView() {
   const [loading, setLoading] = useState(true)
   const [showPassword, setShowPassword] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ valid: boolean; username?: string } | null>(null)
 
   useEffect(() => {
     checkToken()
@@ -62,11 +64,28 @@ export function SettingsView() {
     try {
       await invoke('delete_token')
       setStoredToken(null)
+      setTestResult(null)
       toast.success('Token deleted')
     } catch (err) {
       toast.error(
         `Failed to delete token: ${err instanceof Error ? err.message : 'Unknown error'}`,
       )
+    }
+  }
+
+  async function handleTestConnection() {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const result = await invoke<string>('github_fetch', { endpoint: '/user' })
+      const user = typeof result === 'string' ? JSON.parse(result) : result
+      setTestResult({ valid: true, username: user.login })
+      toast.success(`Connected as ${user.login}`)
+    } catch {
+      setTestResult({ valid: false })
+      toast.error('Connection failed. Token may be invalid.')
+    } finally {
+      setTesting(false)
     }
   }
 
@@ -102,14 +121,48 @@ export function SettingsView() {
                 {maskToken(storedToken)}
               </span>
             </div>
-            <Button
-              variant="destructive"
-              className="w-full"
-              onClick={handleDelete}
-            >
-              <Trash2 data-icon="inline-start" />
-              Delete Token
-            </Button>
+
+            {testResult && (
+              <div className={`flex items-center gap-2 rounded-lg px-4 py-3 text-sm ${
+                testResult.valid
+                  ? 'bg-green-50 text-green-700 border border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-800'
+                  : 'bg-red-50 text-red-700 border border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800'
+              }`}>
+                {testResult.valid ? (
+                  <>
+                    <CheckCircle2 className="size-4 shrink-0" />
+                    <span>Connected as <strong>{testResult.username}</strong></span>
+                  </>
+                ) : (
+                  <>
+                    <XCircle className="size-4 shrink-0" />
+                    <span>Connection failed. Token may be invalid or expired.</span>
+                  </>
+                )}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={handleTestConnection}
+                disabled={testing}
+              >
+                {testing ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : null}
+                {testing ? 'Testing...' : 'Test Connection'}
+              </Button>
+              <Button
+                variant="destructive"
+                className="flex-1"
+                onClick={handleDelete}
+              >
+                <Trash2 data-icon="inline-start" />
+                Delete Token
+              </Button>
+            </div>
           </div>
         ) : (
           <div className="space-y-4">
