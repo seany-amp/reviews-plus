@@ -1,3 +1,4 @@
+mod github;
 mod keychain;
 
 #[tauri::command]
@@ -14,6 +15,7 @@ pub fn run() {
             keychain::store_token,
             keychain::get_token,
             keychain::delete_token,
+            github::github_fetch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
