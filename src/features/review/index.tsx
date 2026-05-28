@@ -112,6 +112,34 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const isScrollingFromTreeRef = useRef(false)
 
+  // Viewed files tracking with sessionStorage persistence
+  const storageKey = `reviews-plus:viewed:${owner}/${repo}/${number}`
+  const [viewedFiles, setViewedFiles] = useState<Set<string>>(() => {
+    try {
+      const saved = sessionStorage.getItem(storageKey)
+      if (saved) return new Set(JSON.parse(saved) as string[])
+    } catch {
+      // ignore parse errors
+    }
+    return new Set()
+  })
+
+  useEffect(() => {
+    sessionStorage.setItem(storageKey, JSON.stringify([...viewedFiles]))
+  }, [viewedFiles, storageKey])
+
+  const handleMarkViewed = useCallback((path: string) => {
+    setViewedFiles((prev) => {
+      if (prev.has(path)) return prev
+      const next = new Set(prev)
+      next.add(path)
+      return next
+    })
+  }, [])
+
+  // Track file visibility - mark as viewed after 2s of being visible
+  const visibilityTimers = useRef<Map<string, number>>(new Map())
+
   const handleStartComment = useCallback(
     (file: string, line: number, side: 'additions' | 'deletions') => {
       setActiveReply(null)
@@ -289,6 +317,47 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     }
   }, [files.data])
 
+  // Mark files as viewed after 2s of visibility
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (!container || !files.data) return
+
+    const viewedObserver = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const path = (entry.target as HTMLElement).dataset.diffFile
+          if (!path) continue
+
+          if (entry.isIntersecting) {
+            if (!visibilityTimers.current.has(path)) {
+              const timer = window.setTimeout(() => {
+                handleMarkViewed(path)
+                visibilityTimers.current.delete(path)
+              }, 2000)
+              visibilityTimers.current.set(path, timer)
+            }
+          } else {
+            const timer = visibilityTimers.current.get(path)
+            if (timer != null) {
+              window.clearTimeout(timer)
+              visibilityTimers.current.delete(path)
+            }
+          }
+        }
+      },
+      { root: container, threshold: [0.3] },
+    )
+
+    const elements = container.querySelectorAll('[data-diff-file]')
+    elements.forEach((el) => viewedObserver.observe(el))
+
+    return () => {
+      viewedObserver.disconnect()
+      visibilityTimers.current.forEach((timer) => window.clearTimeout(timer))
+      visibilityTimers.current.clear()
+    }
+  }, [files.data, handleMarkViewed])
+
   const parsedFiles = useMemo(() => {
     if (!diff.data) return []
     const patches = parsePatchFiles(diff.data)
@@ -332,6 +401,8 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
           onSelectFile={handleScrollToFile}
           isOpen={sidebarOpen}
           activeFile={activeFile}
+          viewedFiles={viewedFiles}
+          onMarkViewed={handleMarkViewed}
         />
         <div ref={scrollContainerRef} className="flex-1 flex flex-col gap-4 overflow-auto">
           {metadata.data && (
