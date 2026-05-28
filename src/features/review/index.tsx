@@ -16,6 +16,9 @@ import type {
 import type { PRIdentifier } from '@/lib/github/parse-url'
 import type { PRMetadata, PRReview, PRComment } from '@/lib/github/types'
 import { toast } from 'sonner'
+import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts'
+import { FilePalette } from '@/components/file-palette'
+import { ShortcutsHelp } from '@/components/shortcuts-help'
 
 interface ActiveComment {
   file: string
@@ -96,6 +99,10 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     parentId: number
   } | null>(null)
 
+  const [currentFileIndex, setCurrentFileIndex] = useState(0)
+  const [filePaletteOpen, setFilePaletteOpen] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
+
   const handleStartComment = useCallback(
     (file: string, line: number, side: 'additions' | 'deletions') => {
       setActiveReply(null)
@@ -170,6 +177,62 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     [metadata.data, postComment],
   )
 
+  const scrollToFileByIndex = useCallback((index: number) => {
+    const containers = document.querySelectorAll('[data-diff-file]')
+    const target = containers[index]
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [])
+
+  const scrollToFileByName = useCallback((filename: string) => {
+    const containers = document.querySelectorAll('[data-diff-file]')
+    for (let i = 0; i < containers.length; i++) {
+      if (containers[i].getAttribute('data-diff-file') === filename) {
+        containers[i].scrollIntoView({ behavior: 'smooth', block: 'start' })
+        setCurrentFileIndex(i)
+        break
+      }
+    }
+  }, [])
+
+  const shortcuts = useMemo(
+    () => [
+      {
+        key: 'j',
+        ignoreInput: true,
+        handler: () => {
+          const containers = document.querySelectorAll('[data-diff-file]')
+          const nextIndex = Math.min(currentFileIndex + 1, containers.length - 1)
+          setCurrentFileIndex(nextIndex)
+          scrollToFileByIndex(nextIndex)
+        },
+      },
+      {
+        key: 'k',
+        ignoreInput: true,
+        handler: () => {
+          const prevIndex = Math.max(currentFileIndex - 1, 0)
+          setCurrentFileIndex(prevIndex)
+          scrollToFileByIndex(prevIndex)
+        },
+      },
+      {
+        key: 'p',
+        metaKey: true,
+        handler: () => setFilePaletteOpen(true),
+      },
+      {
+        key: '?',
+        ignoreInput: true,
+        handler: () => setShowHelp((prev) => !prev),
+      },
+    ],
+    [currentFileIndex, scrollToFileByIndex],
+  )
+
+  useKeyboardShortcuts(shortcuts)
+
   const parsedFiles = useMemo(() => {
     if (!diff.data) return []
     const patches = parsePatchFiles(diff.data)
@@ -202,36 +265,51 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   }
 
   return (
-    <div className="flex flex-col gap-4 h-full overflow-auto">
-      {metadata.data && (
-        <PRHeader
-          metadata={metadata.data}
-          reviews={reviews.data}
-          fileCount={files.data?.length ?? metadata.data.changed_files}
-        />
-      )}
-      <div className="flex flex-col gap-2">
-        {parsedFiles.map((file, i) => (
-          <DiffFile
-            key={file.name ?? i}
-            metadata={file}
-            comments={commentsByFile.get(file.name) ?? []}
-            activeComment={
-              activeComment?.file === file.name ? activeComment : null
-            }
-            activeReply={
-              activeReply?.file === file.name ? activeReply : null
-            }
-            onStartComment={handleStartComment}
-            onStartReply={handleStartReply}
-            onCancelComment={handleCancelComment}
-            onSubmitComment={handleSubmitComment}
-            onSubmitReply={handleSubmitReply}
-            isSubmitting={postComment.isPending}
+    <>
+      <div className="flex flex-col gap-4 h-full overflow-auto">
+        {metadata.data && (
+          <PRHeader
+            metadata={metadata.data}
+            reviews={reviews.data}
+            fileCount={files.data?.length ?? metadata.data.changed_files}
           />
-        ))}
+        )}
+        <div className="flex flex-col gap-2">
+          {parsedFiles.map((file, i) => (
+            <DiffFileContainer
+              key={file.name ?? i}
+              filename={file.name}
+            >
+              <DiffFile
+                metadata={file}
+                comments={commentsByFile.get(file.name) ?? []}
+                activeComment={
+                  activeComment?.file === file.name ? activeComment : null
+                }
+                activeReply={
+                  activeReply?.file === file.name ? activeReply : null
+                }
+                onStartComment={handleStartComment}
+                onStartReply={handleStartReply}
+                onCancelComment={handleCancelComment}
+                onSubmitComment={handleSubmitComment}
+                onSubmitReply={handleSubmitReply}
+                isSubmitting={postComment.isPending}
+              />
+            </DiffFileContainer>
+          ))}
+        </div>
       </div>
-    </div>
+
+      <FilePalette
+        open={filePaletteOpen}
+        onOpenChange={setFilePaletteOpen}
+        files={files.data ?? []}
+        onSelectFile={scrollToFileByName}
+      />
+
+      <ShortcutsHelp visible={showHelp} />
+    </>
   )
 }
 
@@ -633,6 +711,14 @@ function DiffFile({
   }, [metadata, lineAnnotations])
 
   return <div ref={containerRef} className="border rounded overflow-hidden" />
+}
+
+function DiffFileContainer({ filename, children }: { filename: string; children: React.ReactNode }) {
+  return (
+    <div data-diff-file={filename}>
+      {children}
+    </div>
+  )
 }
 
 function LoadingState() {
