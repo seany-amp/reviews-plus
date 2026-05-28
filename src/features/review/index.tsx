@@ -4,11 +4,16 @@ import {
   usePRDiff,
   usePRFiles,
   usePRReviews,
+  usePRComments,
 } from '@/lib/github'
 import { parsePatchFiles, FileDiff, preloadHighlighter } from '@pierre/diffs'
-import type { FileDiffMetadata, ThemesType } from '@pierre/diffs'
+import type {
+  FileDiffMetadata,
+  ThemesType,
+  DiffLineAnnotation,
+} from '@pierre/diffs'
 import type { PRIdentifier } from '@/lib/github/parse-url'
-import type { PRMetadata, PRReview } from '@/lib/github/types'
+import type { PRMetadata, PRReview, PRComment } from '@/lib/github/types'
 
 interface ReviewViewProps {
   pr: PRIdentifier | null
@@ -51,12 +56,25 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   const diff = usePRDiff(owner, repo, number)
   const files = usePRFiles(owner, repo, number)
   const reviews = usePRReviews(owner, repo, number)
+  const comments = usePRComments(owner, repo, number)
 
   const parsedFiles = useMemo(() => {
     if (!diff.data) return []
     const patches = parsePatchFiles(diff.data)
     return patches.flatMap((patch) => patch.files)
   }, [diff.data])
+
+  const commentsByFile = useMemo(() => {
+    if (!comments.data) return new Map<string, PRComment[]>()
+    const map = new Map<string, PRComment[]>()
+    for (const comment of comments.data) {
+      if (comment.line === null) continue
+      const existing = map.get(comment.path) ?? []
+      existing.push(comment)
+      map.set(comment.path, existing)
+    }
+    return map
+  }, [comments.data])
 
   if (metadata.isLoading || diff.isLoading) {
     return <LoadingState />
@@ -82,7 +100,11 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
       )}
       <div className="flex flex-col gap-2">
         {parsedFiles.map((file, i) => (
-          <DiffFile key={file.name ?? i} metadata={file} />
+          <DiffFile
+            key={file.name ?? i}
+            metadata={file}
+            comments={commentsByFile.get(file.name) ?? []}
+          />
         ))}
       </div>
     </div>
@@ -167,24 +189,115 @@ function ReviewBadge({ review }: { review: PRReview }) {
   )
 }
 
-function DiffFile({ metadata }: { metadata: FileDiffMetadata }) {
+function buildAnnotations(
+  comments: PRComment[],
+): DiffLineAnnotation<PRComment>[] {
+  return comments
+    .filter((c) => c.line !== null)
+    .map((comment) => ({
+      side: comment.side === 'LEFT' ? 'deletions' as const : 'additions' as const,
+      lineNumber: comment.line!,
+      metadata: comment,
+    }))
+}
+
+function renderCommentAnnotation(
+  annotation: DiffLineAnnotation<PRComment>,
+): HTMLElement | undefined {
+  const comment = annotation.metadata
+  if (!comment) return undefined
+
+  const wrapper = document.createElement('div')
+  wrapper.style.padding = '8px 12px'
+  wrapper.style.margin = '4px 0'
+  wrapper.style.borderRadius = '6px'
+  wrapper.style.border = '1px solid var(--border, #d0d7de)'
+  wrapper.style.backgroundColor = 'var(--muted, #f6f8fa)'
+  wrapper.style.fontSize = '13px'
+  wrapper.style.lineHeight = '1.4'
+
+  if (comment.in_reply_to_id) {
+    wrapper.style.marginLeft = '16px'
+    wrapper.style.borderLeftWidth = '3px'
+  }
+
+  const header = document.createElement('div')
+  header.style.display = 'flex'
+  header.style.alignItems = 'center'
+  header.style.gap = '6px'
+  header.style.marginBottom = '4px'
+
+  const avatar = document.createElement('img')
+  avatar.src = comment.user.avatar_url
+  avatar.alt = comment.user.login
+  avatar.style.width = '20px'
+  avatar.style.height = '20px'
+  avatar.style.borderRadius = '50%'
+  header.appendChild(avatar)
+
+  const author = document.createElement('span')
+  author.style.fontWeight = '600'
+  author.textContent = comment.user.login
+  header.appendChild(author)
+
+  const time = document.createElement('span')
+  time.style.color = 'var(--muted-foreground, #656d76)'
+  time.style.fontSize = '12px'
+  time.textContent = formatRelativeTime(comment.created_at)
+  header.appendChild(time)
+
+  wrapper.appendChild(header)
+
+  const body = document.createElement('div')
+  body.textContent = comment.body
+  body.style.whiteSpace = 'pre-wrap'
+  wrapper.appendChild(body)
+
+  return wrapper
+}
+
+function formatRelativeTime(dateStr: string): string {
+  const date = new Date(dateStr)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / 60_000)
+  if (diffMins < 1) return 'just now'
+  if (diffMins < 60) return `${diffMins}m ago`
+  const diffHours = Math.floor(diffMins / 60)
+  if (diffHours < 24) return `${diffHours}h ago`
+  const diffDays = Math.floor(diffHours / 24)
+  if (diffDays < 30) return `${diffDays}d ago`
+  return date.toLocaleDateString()
+}
+
+function DiffFile({
+  metadata,
+  comments,
+}: {
+  metadata: FileDiffMetadata
+  comments: PRComment[]
+}) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const instanceRef = useRef<FileDiff | null>(null)
+  const instanceRef = useRef<FileDiff<PRComment> | null>(null)
+
+  const lineAnnotations = useMemo(() => buildAnnotations(comments), [comments])
 
   useEffect(() => {
     if (!containerRef.current) return
 
     const themeType = getInitialThemeType()
 
-    const instance = new FileDiff({
+    const instance = new FileDiff<PRComment>({
       theme: THEMES,
       themeType,
       diffStyle: 'split',
+      renderAnnotation: renderCommentAnnotation,
     })
 
     instance.render({
       fileDiff: metadata,
       fileContainer: containerRef.current,
+      lineAnnotations,
     })
 
     instanceRef.current = instance
@@ -202,7 +315,7 @@ function DiffFile({ metadata }: { metadata: FileDiffMetadata }) {
       }
       instanceRef.current = null
     }
-  }, [metadata])
+  }, [metadata, lineAnnotations])
 
   return <div ref={containerRef} className="border rounded overflow-hidden" />
 }
