@@ -1,13 +1,14 @@
 import { useState } from "react"
-import { GitPullRequest, List, Settings } from "lucide-react"
+import { GitPullRequest, List, Settings, Diff } from "lucide-react"
 import { ReviewView } from "./features/review"
 import { MyPRsView } from "./features/my-prs"
 import { SettingsView } from "./features/settings"
+import { LocalDiffView } from "./features/local-diff"
 import { PRUrlInput } from "./components/pr-url-input"
 import { Button } from "./components/ui/button"
 import type { PRIdentifier } from "./lib/github/parse-url"
 
-type View = "review" | "my-prs" | "settings"
+type View = "review" | "my-prs" | "local-diff" | "settings"
 
 function App() {
   const [view, setView] = useState<View>("review")
@@ -40,6 +41,14 @@ function App() {
             My PRs
           </Button>
           <Button
+            variant={view === "local-diff" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setView("local-diff")}
+          >
+            <Diff className="size-4" />
+            Local Diff
+          </Button>
+          <Button
             variant={view === "settings" ? "secondary" : "ghost"}
             size="sm"
             onClick={() => setView("settings")}
@@ -52,6 +61,7 @@ function App() {
       <main className="flex-1 overflow-y-auto p-4">
         {view === "review" && <ReviewView pr={currentPR} />}
         {view === "my-prs" && <MyPRsView onOpenPR={handleNavigate} />}
+        {view === "local-diff" && <LocalDiffView />}
         {view === "settings" && <SettingsView />}
       </main>
     </div>
