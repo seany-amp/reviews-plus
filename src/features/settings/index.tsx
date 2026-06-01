@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { invoke } from '@/lib/mock/invoke'
+import { getTokenStore } from '@/lib/token-store'
 
 function maskToken(token: string): string {
   if (token.length <= 8) return '••••••••'
@@ -27,7 +28,8 @@ export function SettingsView() {
 
   async function checkToken() {
     try {
-      const existing = await invoke<string>('get_token')
+      const store = await getTokenStore()
+      const existing = await store.get<string>('github-pat')
       if (existing) {
         setStoredToken(existing)
       }
@@ -44,10 +46,22 @@ export function SettingsView() {
       return
     }
 
+    const trimmed = token.trim()
+    const looksLikeToken =
+      trimmed.length >= 20 &&
+      (trimmed.startsWith('ghp_') || trimmed.startsWith('github_pat_'))
+    if (!looksLikeToken) {
+      toast.warning(
+        "That doesn't look like a GitHub token (expected a 'ghp_' or 'github_pat_' prefix). Saving anyway.",
+      )
+    }
+
     setSaving(true)
     try {
-      await invoke('store_token', { token: token.trim() })
-      setStoredToken(token.trim())
+      const store = await getTokenStore()
+      await store.set('github-pat', trimmed)
+      await store.save()
+      setStoredToken(trimmed)
       setToken('')
       setShowPassword(false)
       toast.success('Token saved successfully')
@@ -62,7 +76,9 @@ export function SettingsView() {
 
   async function handleDelete() {
     try {
-      await invoke('delete_token')
+      const store = await getTokenStore()
+      await store.delete('github-pat')
+      await store.save()
       setStoredToken(null)
       setTestResult(null)
       toast.success('Token deleted')
@@ -81,9 +97,10 @@ export function SettingsView() {
       const user = typeof result === 'string' ? JSON.parse(result) : result
       setTestResult({ valid: true, username: user.login })
       toast.success(`Connected as ${user.login}`)
-    } catch {
+    } catch (err) {
       setTestResult({ valid: false })
-      toast.error('Connection failed. Token may be invalid.')
+      const msg = err instanceof Error ? err.message : String(err)
+      toast.error(`Connection failed: ${msg}`)
     } finally {
       setTesting(false)
     }

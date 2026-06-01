@@ -72,15 +72,6 @@ export async function mockInvoke<T = unknown>(
   await new Promise((resolve) => setTimeout(resolve, 50));
 
   switch (command) {
-    case 'get_token':
-      return 'ghp_mock_token_12345' as T;
-
-    case 'store_token':
-      return undefined as T;
-
-    case 'delete_token':
-      return undefined as T;
-
     case 'github_fetch':
       return resolveGithubFetch(args ?? {}) as T;
 

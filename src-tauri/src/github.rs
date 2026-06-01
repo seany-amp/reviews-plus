@@ -1,14 +1,21 @@
-use crate::keychain::get_token;
 use reqwest::Client;
+use tauri_plugin_store::StoreExt;
 
 #[tauri::command]
 pub async fn github_fetch(
+    app: tauri::AppHandle,
     endpoint: String,
     method: Option<String>,
     body: Option<String>,
     accept: Option<String>,
 ) -> Result<String, String> {
-    let token = get_token()?
+    let store = app
+        .store("settings.json")
+        .map_err(|e| format!("Failed to open store: {e}"))?;
+
+    let token = store
+        .get("github-pat")
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
         .ok_or_else(|| "No GitHub token found. Please store a token first.".to_string())?;
 
     let url = format!("https://api.github.com{endpoint}");

@@ -1,14 +1,13 @@
 type InvokeArgs = Record<string, unknown>;
 
-function isMockMode(): boolean {
-  return typeof window === 'undefined' || !('__TAURI__' in window);
-}
-
 export async function invoke<T = unknown>(
   command: string,
   args?: InvokeArgs,
 ): Promise<T> {
-  if (isMockMode()) {
+  // Check every call — __TAURI_INTERNALS__ may not exist when module first loads
+  const hasTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+  if (!hasTauri) {
     const { mockInvoke } = await import('./index');
     return mockInvoke<T>(command, args);
   }
