@@ -15,6 +15,9 @@ dist-ssr
 # Rust
 src-tauri/target/
 
+# Tauri generated schemas
+src-tauri/gen/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -25,3 +28,7 @@ src-tauri/target/
 *.njsproj
 *.sln
 *.sw?
+
+# Claude / AI session logs
+.claude/
+*.jsonl
