@@ -51,4 +51,8 @@ export interface SearchIssueItem {
   created_at: string
   labels: Array<{ name: string; color: string }>
   pull_request: { url: string }
+  state?: string // "open" | "closed"
+  draft?: boolean
+  comments?: number
+  review_comments?: number
 }

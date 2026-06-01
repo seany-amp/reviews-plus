@@ -5,7 +5,7 @@ interface ShortcutsHelpProps {
 const shortcuts = [
   { keys: '?', description: 'Show this help' },
   { keys: 'j / k', description: 'Next / previous file' },
-  { keys: 'c', description: 'Comment on line' },
+  { keys: 'c', description: 'Comment on current file' },
   { keys: '⌘P', description: 'Jump to file' },
   { keys: '⌘B', description: 'Toggle file sidebar' },
   { keys: '⌘O', description: 'Focus URL input' },

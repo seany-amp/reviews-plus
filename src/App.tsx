@@ -27,6 +27,7 @@ function App() {
           <Button
             variant={view === "review" ? "secondary" : "ghost"}
             size="sm"
+            aria-current={view === "review" ? "page" : undefined}
             onClick={() => setView("review")}
           >
             <GitPullRequest className="size-4" />
@@ -35,6 +36,7 @@ function App() {
           <Button
             variant={view === "my-prs" ? "secondary" : "ghost"}
             size="sm"
+            aria-current={view === "my-prs" ? "page" : undefined}
             onClick={() => setView("my-prs")}
           >
             <List className="size-4" />
@@ -43,6 +45,7 @@ function App() {
           <Button
             variant={view === "local-diff" ? "secondary" : "ghost"}
             size="sm"
+            aria-current={view === "local-diff" ? "page" : undefined}
             onClick={() => setView("local-diff")}
           >
             <Diff className="size-4" />
@@ -51,6 +54,7 @@ function App() {
           <Button
             variant={view === "settings" ? "secondary" : "ghost"}
             size="sm"
+            aria-current={view === "settings" ? "page" : undefined}
             onClick={() => setView("settings")}
           >
             <Settings className="size-4" />

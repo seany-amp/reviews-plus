@@ -27,6 +27,10 @@ const searchIssuesFixture = {
       created_at: "2026-05-26T10:00:00Z",
       pull_request: { url: "https://api.github.com/repos/denoland/deno/pulls/34417" },
       labels: [],
+      state: "open",
+      draft: false,
+      comments: 4,
+      review_comments: 7,
     },
     {
       number: 15422,
@@ -36,6 +40,10 @@ const searchIssuesFixture = {
       created_at: "2026-05-21T14:30:00Z",
       pull_request: { url: "https://api.github.com/repos/tauri-apps/tauri/pulls/15422" },
       labels: [],
+      state: "open",
+      draft: true,
+      comments: 1,
+      review_comments: 0,
     },
   ],
 };

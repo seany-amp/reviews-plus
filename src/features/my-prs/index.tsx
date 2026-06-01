@@ -23,6 +23,19 @@ function parseRepoFromUrl(repositoryUrl: string): { owner: string; repo: string 
   return { owner: parts[parts.length - 2], repo: parts[parts.length - 1] }
 }
 
+function statusFromItem(item: SearchIssueItem): { label: string; className: string } | null {
+  if (item.draft) {
+    return { label: 'Draft', className: 'bg-muted text-muted-foreground' }
+  }
+  if (item.state === 'closed') {
+    return { label: 'Closed', className: 'bg-destructive/10 text-destructive' }
+  }
+  if (item.state === 'open') {
+    return { label: 'Open', className: 'bg-green-500/10 text-green-600 dark:text-green-400' }
+  }
+  return null
+}
+
 interface MyPRsViewProps {
   onOpenPR: (pr: PRIdentifier) => void
 }
@@ -78,13 +91,22 @@ export function MyPRsView({ onOpenPR }: MyPRsViewProps) {
     <ul className="divide-y">
       {items.map((item: SearchIssueItem) => {
         const { owner, repo } = parseRepoFromUrl(item.repository_url)
+        const status = statusFromItem(item)
+        const reviewCount = item.review_comments
         return (
           <li
             key={`${owner}/${repo}#${item.number}`}
             className="py-3 px-2 cursor-pointer hover:bg-accent rounded transition-colors"
             onClick={() => onOpenPR({ owner, repo, number: item.number })}
           >
-            <p className="font-bold text-sm truncate">{item.title}</p>
+            <div className="flex items-center gap-2">
+              {status && (
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${status.className}`}>
+                  {status.label}
+                </span>
+              )}
+              <p className="font-bold text-sm truncate">{item.title}</p>
+            </div>
             <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
               <span>{owner}/{repo}</span>
               <span className="flex items-center gap-1">
@@ -96,6 +118,11 @@ export function MyPRsView({ onOpenPR }: MyPRsViewProps) {
                 {item.user.login}
               </span>
               <span>{relativeTime(item.created_at)}</span>
+              {reviewCount !== undefined && (
+                <span title="Review comments">
+                  {reviewCount} review{reviewCount === 1 ? '' : 's'}
+                </span>
+              )}
             </div>
           </li>
         )
