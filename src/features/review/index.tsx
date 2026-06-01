@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useMemo, useState, useCallback } from 'react'
+import { useEffect, useRef, useMemo, useState, useCallback } from 'react'
 import {
   usePRMetadata,
   usePRDiff,
@@ -8,13 +8,28 @@ import {
   usePostComment,
 } from '@/lib/github'
 import { parsePatchFiles, preloadHighlighter } from '@pierre/diffs'
-import { FileDiff, WorkerPoolContextProvider } from '@pierre/diffs/react'
+import { CodeView, WorkerPoolContextProvider } from '@pierre/diffs/react'
+import type {
+  CodeViewHandle,
+  CodeViewItem,
+  CodeViewDiffItem,
+  CodeViewScrollTarget,
+} from '@pierre/diffs/react'
 import type {
   FileDiffMetadata,
-  FileDiffOptions,
+  CodeViewOptions,
+  GetHoveredLineResult,
   ThemesType,
   DiffLineAnnotation,
 } from '@pierre/diffs'
+
+type CodeViewInstance = NonNullable<
+  ReturnType<CodeViewHandle<AnnotationPayload>['getInstance']>
+>
+
+type GutterHoveredLine =
+  | GetHoveredLineResult<'file'>
+  | GetHoveredLineResult<'diff'>
 import {
   WORKER_POOL_OPTIONS,
   WORKER_HIGHLIGHTER_OPTIONS,
@@ -79,7 +94,7 @@ function getIsNarrow(): boolean {
   return window.matchMedia('(max-width: 767px)').matches
 }
 
-const DIFF_OPTIONS: FileDiffOptions<AnnotationPayload> = {
+const DIFF_OPTIONS: CodeViewOptions<AnnotationPayload> = {
   theme: THEMES,
   themeType: getInitialThemeType(),
   diffStyle: 'split',
@@ -88,6 +103,8 @@ const DIFF_OPTIONS: FileDiffOptions<AnnotationPayload> = {
   lineDiffType: 'word-alt',
   expandUnchanged: true,
   overflow: 'scroll',
+  stickyHeaders: true,
+  layout: { gap: 16, paddingTop: 0, paddingBottom: 0 },
 }
 
 export function ReviewView({ pr }: ReviewViewProps) {
@@ -153,7 +170,7 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     return () => mql.removeEventListener('change', onChange)
   }, [])
 
-  const diffOptions = useMemo<FileDiffOptions<AnnotationPayload>>(
+  const diffOptions = useMemo<CodeViewOptions<AnnotationPayload>>(
     () => ({
       ...DIFF_OPTIONS,
       themeType,
@@ -169,6 +186,7 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   const userToggledSidebar = useRef(false)
   const [activeFile, setActiveFile] = useState<string | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const codeViewRef = useRef<CodeViewHandle<AnnotationPayload>>(null)
   const isScrollingFromTreeRef = useRef(false)
 
   useEffect(() => {
@@ -224,12 +242,48 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     [parsedFiles],
   )
 
-  // Lazy rendering: only mount files within viewport proximity
-  const [visibleFiles, setVisibleFiles] = useState<Set<number>>(() => new Set([0, 1, 2]))
+  const annotationsByFile = useMemo(() => {
+    const m = new Map<string, DiffLineAnnotation<AnnotationPayload>[]>()
+    for (const file of parsedFiles) {
+      m.set(
+        file.name,
+        buildAnnotationsForFile(
+          file.name,
+          commentsByPath.get(file.name) ?? EMPTY_COMMENTS,
+          activeComment,
+          activeReply,
+        ),
+      )
+    }
+    return m
+  }, [parsedFiles, commentsByPath, activeComment, activeReply])
 
-  useEffect(() => {
-    setVisibleFiles(new Set([0, 1, 2]))
-  }, [parsedFiles])
+  // Per-file version bumped only when that file's annotations change, so
+  // CodeView keeps the cached record snapshot for unchanged files.
+  const versionRef = useRef(
+    new Map<string, { version: number; snapshot: DiffLineAnnotation<AnnotationPayload>[] }>(),
+  )
+
+  const items = useMemo<CodeViewDiffItem<AnnotationPayload>[]>(() => {
+    return parsedFiles.map((file) => {
+      const annotations = annotationsByFile.get(file.name) ?? []
+      const entry = versionRef.current.get(file.name)
+      let version: number
+      if (!entry || !areAnnotationsEqual(entry.snapshot, annotations)) {
+        version = (entry?.version ?? 0) + 1
+        versionRef.current.set(file.name, { version, snapshot: annotations })
+      } else {
+        version = entry.version
+      }
+      return {
+        id: file.name,
+        type: 'diff' as const,
+        fileDiff: file,
+        annotations,
+        version,
+      }
+    })
+  }, [parsedFiles, annotationsByFile])
 
   const handleStartComment = useCallback(
     (file: string, line: number, side: 'additions' | 'deletions') => {
@@ -305,42 +359,109 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     [metadata.data, postComment],
   )
 
-  const scrollToFileByIndex = useCallback((index: number) => {
-    const el = scrollContainerRef.current?.querySelector(`[data-diff-file-idx="${index}"]`)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
+  const scrollToItem = useCallback((id: string) => {
+    codeViewRef.current?.scrollTo({
+      type: 'item',
+      id,
+      align: 'start',
+      behavior: 'smooth',
+    } satisfies CodeViewScrollTarget)
   }, [])
 
-  const scrollToFileByName = useCallback((filename: string) => {
-    const el = scrollContainerRef.current?.querySelector(`[data-diff-file="${CSS.escape(filename)}"]`)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  const scrollToFileByIndex = useCallback(
+    (index: number) => {
+      const file = parsedFiles[index]
+      if (file) scrollToItem(file.name)
+    },
+    [parsedFiles, scrollToItem],
+  )
+
+  const scrollToFileByName = useCallback(
+    (filename: string) => {
+      scrollToItem(filename)
       const idx = fileIndex.get(filename)
       if (idx != null) setCurrentFileIndex(idx)
-    }
-  }, [fileIndex])
+    },
+    [fileIndex, scrollToItem],
+  )
 
-  const handleScrollToFile = useCallback((path: string) => {
-    const idx = fileIndex.get(path)
-    if (idx != null) {
-      setVisibleFiles((prev) => {
-        const next = new Set(prev)
-        next.add(idx)
-        return next
-      })
-    }
-    isScrollingFromTreeRef.current = true
-    requestAnimationFrame(() => {
-      const el = scrollContainerRef.current?.querySelector(`[data-diff-file="${CSS.escape(path)}"]`)
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }
+  const handleScrollToFile = useCallback(
+    (path: string) => {
+      isScrollingFromTreeRef.current = true
+      scrollToItem(path)
       setTimeout(() => {
         isScrollingFromTreeRef.current = false
       }, 500)
-    })
-  }, [fileIndex])
+    },
+    [scrollToItem],
+  )
+
+  const renderAnnotation = useCallback(
+    (
+      annotation: DiffLineAnnotation<AnnotationPayload>,
+      _item: CodeViewItem<AnnotationPayload>,
+    ) => {
+      const payload = annotation.metadata
+      if (!payload) return null
+
+      if (payload.form) {
+        return (
+          <CommentForm
+            onSubmit={(body) => handleSubmitComment(body, payload.form!.file, payload.form!.line, payload.form!.side)}
+            onCancel={handleCancelComment}
+            isSubmitting={postComment.isPending}
+            placeholder="Add a comment..."
+          />
+        )
+      }
+
+      if (payload.reply) {
+        return (
+          <CommentForm
+            onSubmit={(body) => handleSubmitReply(body, payload.reply!.file, payload.reply!.line, payload.reply!.side, payload.reply!.parentId)}
+            onCancel={handleCancelComment}
+            isSubmitting={postComment.isPending}
+            placeholder="Reply..."
+          />
+        )
+      }
+
+      if (payload.comment) {
+        const comment = payload.comment
+        const side = comment.side === 'LEFT' ? ('deletions' as const) : ('additions' as const)
+        return (
+          <ExistingComment
+            comment={comment}
+            onReply={() => handleStartReply(comment.path, comment.line!, side, comment.id)}
+          />
+        )
+      }
+
+      return null
+    },
+    [handleSubmitComment, handleSubmitReply, handleCancelComment, handleStartReply, postComment.isPending],
+  )
+
+  const renderGutterUtility = useCallback(
+    (
+      getHoveredLine: () => GutterHoveredLine | undefined,
+      item: CodeViewItem<AnnotationPayload>,
+    ) => (
+      <button
+        className="diffs-gutter-add-comment"
+        onClick={(e) => {
+          e.stopPropagation()
+          const hovered = getHoveredLine()
+          if (hovered && 'side' in hovered) {
+            handleStartComment(item.id, hovered.lineNumber, hovered.side)
+          }
+        }}
+      >
+        +
+      </button>
+    ),
+    [handleStartComment],
+  )
 
   const shortcuts = useMemo(
     () => [
@@ -350,8 +471,7 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
         handler: () => {
           const nextIndex = Math.min(currentFileIndex + 1, parsedFiles.length - 1)
           setCurrentFileIndex(nextIndex)
-          setVisibleFiles((prev) => { const n = new Set(prev); n.add(nextIndex); return n })
-          requestAnimationFrame(() => scrollToFileByIndex(nextIndex))
+          scrollToFileByIndex(nextIndex)
         },
       },
       {
@@ -360,8 +480,7 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
         handler: () => {
           const prevIndex = Math.max(currentFileIndex - 1, 0)
           setCurrentFileIndex(prevIndex)
-          setVisibleFiles((prev) => { const n = new Set(prev); n.add(prevIndex); return n })
-          requestAnimationFrame(() => scrollToFileByIndex(prevIndex))
+          scrollToFileByIndex(prevIndex)
         },
       },
       {
@@ -370,12 +489,7 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
         handler: () => {
           const file = parsedFiles[currentFileIndex]
           if (!file) return
-          setVisibleFiles((prev) => {
-            const n = new Set(prev)
-            n.add(currentFileIndex)
-            return n
-          })
-          requestAnimationFrame(() => scrollToFileByIndex(currentFileIndex))
+          scrollToFileByIndex(currentFileIndex)
           handleStartComment(file.name, findFirstAddedLine(file), 'additions')
         },
       },
@@ -403,75 +517,65 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
 
   useKeyboardShortcuts(shortcuts)
 
-  // Single IntersectionObserver: lazy-loads files, tracks active file, and
-  // auto-marks viewed after 2s visibility — all on the same elements.
+  // Active-file detection + 2s>=30% auto-mark-viewed, computed from CodeView's
+  // virtualized scroll/visibility instead of a per-element IntersectionObserver.
   const visibilityTimers = useRef<Map<string, number>>(new Map())
+
+  const handleCodeViewScroll = useCallback(
+    (scrollTop: number, viewer: CodeViewInstance) => {
+      const viewportHeight = viewer.getHeight()
+      const rendered = viewer.getRenderedItems()
+
+      let topmostItem: string | null = null
+      let topmostTop = Infinity
+
+      for (const r of rendered) {
+        const top = viewer.getTopForItem(r.id)
+        if (top == null) continue
+        const itemHeight = r.element.offsetHeight || 1
+
+        const viewportTop = scrollTop
+        const viewportBottom = scrollTop + viewportHeight
+        const overlap =
+          Math.min(top + itemHeight, viewportBottom) - Math.max(top, viewportTop)
+        const fraction = overlap > 0 ? overlap / itemHeight : 0
+
+        if (fraction >= 0.3) {
+          if (!visibilityTimers.current.has(r.id)) {
+            const timer = window.setTimeout(() => {
+              handleMarkViewed(r.id)
+              visibilityTimers.current.delete(r.id)
+            }, 2000)
+            visibilityTimers.current.set(r.id, timer)
+          }
+        } else {
+          const timer = visibilityTimers.current.get(r.id)
+          if (timer != null) {
+            window.clearTimeout(timer)
+            visibilityTimers.current.delete(r.id)
+          }
+        }
+
+        if (overlap > 0 && top < topmostTop) {
+          topmostTop = top
+          topmostItem = r.id
+        }
+      }
+
+      if (!isScrollingFromTreeRef.current && topmostItem) {
+        setActiveFile(topmostItem)
+      }
+    },
+    [handleMarkViewed],
+  )
+
   useEffect(() => {
-    const container = scrollContainerRef.current
-    if (!container || !parsedFiles.length) return
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const toAdd: number[] = []
-        for (const entry of entries) {
-          const el = entry.target as HTMLElement
-          if (entry.isIntersecting) {
-            const idx = Number(el.dataset.diffFileIdx)
-            if (!isNaN(idx)) toAdd.push(idx)
-          }
-
-          const path = el.dataset.diffFile
-          if (path) {
-            if (entry.isIntersecting && entry.intersectionRatio >= 0.3) {
-              if (!visibilityTimers.current.has(path)) {
-                const timer = window.setTimeout(() => {
-                  handleMarkViewed(path)
-                  visibilityTimers.current.delete(path)
-                }, 2000)
-                visibilityTimers.current.set(path, timer)
-              }
-            } else {
-              const timer = visibilityTimers.current.get(path)
-              if (timer != null) {
-                window.clearTimeout(timer)
-                visibilityTimers.current.delete(path)
-              }
-            }
-          }
-        }
-        if (toAdd.length > 0) {
-          setVisibleFiles((prev) => {
-            const next = new Set(prev)
-            toAdd.forEach((i) => next.add(i))
-            return next
-          })
-        }
-
-        if (!isScrollingFromTreeRef.current) {
-          for (const entry of entries) {
-            if (entry.isIntersecting && entry.intersectionRatio > 0.1) {
-              const path = (entry.target as HTMLElement).dataset.diffFile
-              if (path) {
-                setActiveFile(path)
-                break
-              }
-            }
-          }
-        }
-      },
-      { root: container, rootMargin: '200px 0px', threshold: [0, 0.1, 0.3] },
-    )
-
-    const elements = container.querySelectorAll('[data-diff-file-idx]')
-    elements.forEach((el) => observer.observe(el))
-
     const timers = visibilityTimers.current
     return () => {
-      observer.disconnect()
       timers.forEach((t) => window.clearTimeout(t))
       timers.clear()
     }
-  }, [parsedFiles, handleMarkViewed])
+  }, [parsedFiles])
 
   if (metadata.isLoading || diff.isLoading) {
     return <DiffLoadingSkeleton />
@@ -518,26 +622,16 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
             poolOptions={WORKER_POOL_OPTIONS}
             highlighterOptions={WORKER_HIGHLIGHTER_OPTIONS}
           >
-            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
-              {parsedFiles.map((file, idx) => (
-                <LazyFileDiff
-                  key={file.name}
-                  file={file}
-                  index={idx}
-                  visible={visibleFiles.has(idx)}
-                  options={diffOptions}
-                  comments={commentsByPath.get(file.name) ?? EMPTY_COMMENTS}
-                  activeComment={activeComment}
-                  activeReply={activeReply}
-                  onStartComment={handleStartComment}
-                  onStartReply={handleStartReply}
-                  onCancelComment={handleCancelComment}
-                  onSubmitComment={handleSubmitComment}
-                  onSubmitReply={handleSubmitReply}
-                  isSubmitting={postComment.isPending}
-                />
-              ))}
-            </div>
+            <CodeView<AnnotationPayload>
+              ref={codeViewRef}
+              items={items}
+              options={diffOptions}
+              className="flex-1 overflow-y-auto p-4"
+              renderAnnotation={renderAnnotation}
+              renderGutterUtility={renderGutterUtility}
+              onScroll={handleCodeViewScroll}
+              containerRef={scrollContainerRef}
+            />
           </WorkerPoolContextProvider>
         </div>
       </div>
@@ -553,129 +647,6 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     </>
   )
 }
-
-const LazyFileDiff = memo(function LazyFileDiff({
-  file,
-  index,
-  visible,
-  options,
-  comments,
-  activeComment,
-  activeReply,
-  onStartComment,
-  onStartReply,
-  onCancelComment,
-  onSubmitComment,
-  onSubmitReply,
-  isSubmitting,
-}: {
-  file: FileDiffMetadata
-  index: number
-  visible: boolean
-  options: FileDiffOptions<AnnotationPayload>
-  comments: PRComment[]
-  activeComment: ActiveComment | null
-  activeReply: { file: string; line: number; side: 'additions' | 'deletions'; parentId: number } | null
-  onStartComment: (file: string, line: number, side: 'additions' | 'deletions') => void
-  onStartReply: (file: string, line: number, side: 'additions' | 'deletions', parentId: number) => void
-  onCancelComment: () => void
-  onSubmitComment: (body: string, path: string, line: number, side: 'additions' | 'deletions') => void
-  onSubmitReply: (body: string, path: string, line: number, side: 'additions' | 'deletions', parentId: number) => void
-  isSubmitting: boolean
-}) {
-  const annotations = useMemo(() =>
-    buildAnnotationsForFile(file.name, comments, activeComment, activeReply),
-    [file.name, comments, activeComment, activeReply],
-  )
-
-  const renderAnnotation = useCallback(
-    (annotation: DiffLineAnnotation<AnnotationPayload>) => {
-      const payload = annotation.metadata
-      if (!payload) return null
-
-      if (payload.form) {
-        return (
-          <CommentForm
-            onSubmit={(body) => onSubmitComment(body, payload.form!.file, payload.form!.line, payload.form!.side)}
-            onCancel={onCancelComment}
-            isSubmitting={isSubmitting}
-            placeholder="Add a comment..."
-          />
-        )
-      }
-
-      if (payload.reply) {
-        return (
-          <CommentForm
-            onSubmit={(body) => onSubmitReply(body, payload.reply!.file, payload.reply!.line, payload.reply!.side, payload.reply!.parentId)}
-            onCancel={onCancelComment}
-            isSubmitting={isSubmitting}
-            placeholder="Reply..."
-          />
-        )
-      }
-
-      if (payload.comment) {
-        const comment = payload.comment
-        const side = comment.side === 'LEFT' ? 'deletions' as const : 'additions' as const
-        return (
-          <ExistingComment
-            comment={comment}
-            onReply={() => onStartReply(comment.path, comment.line!, side, comment.id)}
-          />
-        )
-      }
-
-      return null
-    },
-    [onSubmitComment, onSubmitReply, onCancelComment, onStartReply, isSubmitting],
-  )
-
-  const renderGutterUtility = useCallback(
-    (getHoveredLine: () => { lineNumber: number; side: string } | undefined) => (
-      <button
-        className="diffs-gutter-add-comment"
-        onClick={(e) => {
-          e.stopPropagation()
-          const hovered = getHoveredLine()
-          if (hovered) {
-            onStartComment(file.name, hovered.lineNumber, hovered.side as 'additions' | 'deletions')
-          }
-        }}
-      >
-        +
-      </button>
-    ),
-    [onStartComment, file.name],
-  )
-
-  if (!visible) {
-    return (
-      <div
-        data-diff-file={file.name}
-        data-diff-file-idx={index}
-        className="border rounded overflow-hidden"
-        style={{ minHeight: 60 }}
-      >
-        <div className="h-10 bg-muted/40 border-b flex items-center px-3 gap-2">
-          <span className="text-xs text-muted-foreground font-mono truncate">{file.name}</span>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div data-diff-file={file.name} data-diff-file-idx={index}>
-      <FileDiff<AnnotationPayload>
-        fileDiff={file}
-        options={options}
-        lineAnnotations={annotations}
-        renderAnnotation={renderAnnotation}
-        renderGutterUtility={renderGutterUtility}
-      />
-    </div>
-  )
-})
 
 function PRHeader({
   metadata,
@@ -814,6 +785,25 @@ function buildAnnotationsForFile(
   }
 
   return annotations
+}
+
+function areAnnotationsEqual(
+  a: DiffLineAnnotation<AnnotationPayload>[],
+  b: DiffLineAnnotation<AnnotationPayload>[],
+): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]
+    const y = b[i]
+    if (x.side !== y.side || x.lineNumber !== y.lineNumber) return false
+    const xm = x.metadata
+    const ym = y.metadata
+    if (xm?.comment?.id !== ym?.comment?.id) return false
+    if (xm?.comment?.body !== ym?.comment?.body) return false
+    if (Boolean(xm?.form) !== Boolean(ym?.form)) return false
+    if (xm?.reply?.parentId !== ym?.reply?.parentId) return false
+  }
+  return true
 }
 
 function findFirstAddedLine(file: FileDiffMetadata | undefined): number {
