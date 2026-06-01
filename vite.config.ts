@@ -12,6 +12,12 @@ export default defineConfig({
     },
   },
 
+  // The @pierre/diffs syntax-highlighting worker is an ES module and is
+  // code-split, which the default "iife" worker format cannot produce.
+  worker: {
+    format: "es",
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   clearScreen: false,
   server: {

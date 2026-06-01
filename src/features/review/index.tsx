@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo, useState, useCallback } from 'react'
+import { memo, useEffect, useRef, useMemo, useState, useCallback } from 'react'
 import {
   usePRMetadata,
   usePRDiff,
@@ -7,12 +7,18 @@ import {
   usePRComments,
   usePostComment,
 } from '@/lib/github'
-import { parsePatchFiles, FileDiff, preloadHighlighter } from '@pierre/diffs'
+import { parsePatchFiles, preloadHighlighter } from '@pierre/diffs'
+import { FileDiff, WorkerPoolContextProvider } from '@pierre/diffs/react'
 import type {
   FileDiffMetadata,
+  FileDiffOptions,
   ThemesType,
   DiffLineAnnotation,
 } from '@pierre/diffs'
+import {
+  WORKER_POOL_OPTIONS,
+  WORKER_HIGHLIGHTER_OPTIONS,
+} from '@/lib/diffs/worker-pool'
 import type { PRIdentifier } from '@/lib/github/parse-url'
 import type { PRMetadata, PRReview, PRComment } from '@/lib/github/types'
 import { toast } from 'sonner'
@@ -54,6 +60,8 @@ interface ReviewViewProps {
   pr: PRIdentifier | null
 }
 
+const EMPTY_COMMENTS: PRComment[] = []
+
 const THEMES: ThemesType = {
   dark: 'github-dark-dimmed',
   light: 'github-light',
@@ -66,11 +74,37 @@ function getInitialThemeType(): 'dark' | 'light' {
     : 'light'
 }
 
+function getIsNarrow(): boolean {
+  if (typeof window === 'undefined') return false
+  return window.matchMedia('(max-width: 767px)').matches
+}
+
+const DIFF_OPTIONS: FileDiffOptions<AnnotationPayload> = {
+  theme: THEMES,
+  themeType: getInitialThemeType(),
+  diffStyle: 'split',
+  diffIndicators: 'bars',
+  hunkSeparators: 'line-info',
+  lineDiffType: 'word-alt',
+  expandUnchanged: true,
+  overflow: 'scroll',
+}
+
 export function ReviewView({ pr }: ReviewViewProps) {
   useEffect(() => {
     preloadHighlighter({
       themes: [THEMES.dark, THEMES.light],
-      langs: ['typescript', 'javascript', 'json', 'css', 'html', 'markdown'],
+      langs: [
+        'typescript',
+        'javascript',
+        'json',
+        'css',
+        'html',
+        'markdown',
+        'rust',
+        'yaml',
+        'toml',
+      ],
     })
   }, [])
 
@@ -102,24 +136,54 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     parentId: number
   } | null>(null)
 
+  const [themeType, setThemeType] = useState(getInitialThemeType())
+  useEffect(() => {
+    const mql = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = (e: MediaQueryListEvent) =>
+      setThemeType(e.matches ? 'dark' : 'light')
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }, [])
+
+  const [isNarrow, setIsNarrow] = useState(getIsNarrow())
+  useEffect(() => {
+    const mql = window.matchMedia('(max-width: 767px)')
+    const onChange = (e: MediaQueryListEvent) => setIsNarrow(e.matches)
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }, [])
+
+  const diffOptions = useMemo<FileDiffOptions<AnnotationPayload>>(
+    () => ({
+      ...DIFF_OPTIONS,
+      themeType,
+      diffStyle: isNarrow ? 'unified' : 'split',
+    }),
+    [themeType, isNarrow],
+  )
+
   const [currentFileIndex, setCurrentFileIndex] = useState(0)
   const [filePaletteOpen, setFilePaletteOpen] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(
-    (files.data?.length ?? 0) > 3,
-  )
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const userToggledSidebar = useRef(false)
   const [activeFile, setActiveFile] = useState<string | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const isScrollingFromTreeRef = useRef(false)
 
-  // Viewed files tracking with sessionStorage persistence
+  useEffect(() => {
+    if (!userToggledSidebar.current && files.data && files.data.length > 3) {
+      setSidebarOpen(true)
+    }
+  }, [files.data])
+
   const storageKey = `reviews-plus:viewed:${owner}/${repo}/${number}`
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(() => {
     try {
       const saved = sessionStorage.getItem(storageKey)
       if (saved) return new Set(JSON.parse(saved) as string[])
     } catch {
-      // ignore parse errors
+      // ignore
     }
     return new Set()
   })
@@ -137,8 +201,35 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     })
   }, [])
 
-  // Track file visibility - mark as viewed after 2s of being visible
-  const visibilityTimers = useRef<Map<string, number>>(new Map())
+  const parsedFiles = useMemo(() => {
+    if (!diff.data) return []
+    const patches = parsePatchFiles(diff.data)
+    return patches.flatMap((patch) => patch.files)
+  }, [diff.data])
+
+  const fileComments = useMemo(() => comments.data ?? [], [comments.data])
+
+  const commentsByPath = useMemo(() => {
+    const m = new Map<string, PRComment[]>()
+    for (const c of fileComments) {
+      const a = m.get(c.path) ?? []
+      a.push(c)
+      m.set(c.path, a)
+    }
+    return m
+  }, [fileComments])
+
+  const fileIndex = useMemo(
+    () => new Map(parsedFiles.map((f, i) => [f.name, i])),
+    [parsedFiles],
+  )
+
+  // Lazy rendering: only mount files within viewport proximity
+  const [visibleFiles, setVisibleFiles] = useState<Set<number>>(() => new Set([0, 1, 2]))
+
+  useEffect(() => {
+    setVisibleFiles(new Set([0, 1, 2]))
+  }, [parsedFiles])
 
   const handleStartComment = useCallback(
     (file: string, line: number, side: 'additions' | 'deletions') => {
@@ -215,34 +306,41 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   )
 
   const scrollToFileByIndex = useCallback((index: number) => {
-    const containers = document.querySelectorAll('[data-diff-file]')
-    const target = containers[index]
-    if (target) {
-      target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const el = scrollContainerRef.current?.querySelector(`[data-diff-file-idx="${index}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   }, [])
 
   const scrollToFileByName = useCallback((filename: string) => {
-    const containers = document.querySelectorAll('[data-diff-file]')
-    for (let i = 0; i < containers.length; i++) {
-      if (containers[i].getAttribute('data-diff-file') === filename) {
-        containers[i].scrollIntoView({ behavior: 'smooth', block: 'start' })
-        setCurrentFileIndex(i)
-        break
-      }
+    const el = scrollContainerRef.current?.querySelector(`[data-diff-file="${CSS.escape(filename)}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      const idx = fileIndex.get(filename)
+      if (idx != null) setCurrentFileIndex(idx)
     }
-  }, [])
+  }, [fileIndex])
 
   const handleScrollToFile = useCallback((path: string) => {
-    const el = document.querySelector(`[data-diff-file="${path}"]`)
-    if (el) {
-      isScrollingFromTreeRef.current = true
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const idx = fileIndex.get(path)
+    if (idx != null) {
+      setVisibleFiles((prev) => {
+        const next = new Set(prev)
+        next.add(idx)
+        return next
+      })
+    }
+    isScrollingFromTreeRef.current = true
+    requestAnimationFrame(() => {
+      const el = scrollContainerRef.current?.querySelector(`[data-diff-file="${CSS.escape(path)}"]`)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
       setTimeout(() => {
         isScrollingFromTreeRef.current = false
       }, 500)
-    }
-  }, [])
+    })
+  }, [fileIndex])
 
   const shortcuts = useMemo(
     () => [
@@ -250,10 +348,10 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
         key: 'j',
         ignoreInput: true,
         handler: () => {
-          const containers = document.querySelectorAll('[data-diff-file]')
-          const nextIndex = Math.min(currentFileIndex + 1, containers.length - 1)
+          const nextIndex = Math.min(currentFileIndex + 1, parsedFiles.length - 1)
           setCurrentFileIndex(nextIndex)
-          scrollToFileByIndex(nextIndex)
+          setVisibleFiles((prev) => { const n = new Set(prev); n.add(nextIndex); return n })
+          requestAnimationFrame(() => scrollToFileByIndex(nextIndex))
         },
       },
       {
@@ -262,7 +360,23 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
         handler: () => {
           const prevIndex = Math.max(currentFileIndex - 1, 0)
           setCurrentFileIndex(prevIndex)
-          scrollToFileByIndex(prevIndex)
+          setVisibleFiles((prev) => { const n = new Set(prev); n.add(prevIndex); return n })
+          requestAnimationFrame(() => scrollToFileByIndex(prevIndex))
+        },
+      },
+      {
+        key: 'c',
+        ignoreInput: true,
+        handler: () => {
+          const file = parsedFiles[currentFileIndex]
+          if (!file) return
+          setVisibleFiles((prev) => {
+            const n = new Set(prev)
+            n.add(currentFileIndex)
+            return n
+          })
+          requestAnimationFrame(() => scrollToFileByIndex(currentFileIndex))
+          handleStartComment(file.name, findFirstAddedLine(file), 'additions')
         },
       },
       {
@@ -273,7 +387,10 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
       {
         key: 'b',
         metaKey: true,
-        handler: () => setSidebarOpen((prev) => !prev),
+        handler: () => {
+          userToggledSidebar.current = true
+          setSidebarOpen((prev) => !prev)
+        },
       },
       {
         key: '?',
@@ -281,100 +398,80 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
         handler: () => setShowHelp((prev) => !prev),
       },
     ],
-    [currentFileIndex, scrollToFileByIndex],
+    [currentFileIndex, parsedFiles, scrollToFileByIndex, handleStartComment],
   )
 
   useKeyboardShortcuts(shortcuts)
 
+  // Single IntersectionObserver: lazy-loads files, tracks active file, and
+  // auto-marks viewed after 2s visibility — all on the same elements.
+  const visibilityTimers = useRef<Map<string, number>>(new Map())
   useEffect(() => {
     const container = scrollContainerRef.current
-    if (!container || !files.data) return
-
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+    if (!container || !parsedFiles.length) return
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (isScrollingFromTreeRef.current) return
+        const toAdd: number[] = []
         for (const entry of entries) {
-          if (entry.isIntersecting && entry.intersectionRatio > 0.3) {
-            const path = (entry.target as HTMLElement).dataset.diffFile
-            if (path) {
-              if (debounceTimer) clearTimeout(debounceTimer)
-              debounceTimer = setTimeout(() => setActiveFile(path), 100)
+          const el = entry.target as HTMLElement
+          if (entry.isIntersecting) {
+            const idx = Number(el.dataset.diffFileIdx)
+            if (!isNaN(idx)) toAdd.push(idx)
+          }
+
+          const path = el.dataset.diffFile
+          if (path) {
+            if (entry.isIntersecting && entry.intersectionRatio >= 0.3) {
+              if (!visibilityTimers.current.has(path)) {
+                const timer = window.setTimeout(() => {
+                  handleMarkViewed(path)
+                  visibilityTimers.current.delete(path)
+                }, 2000)
+                visibilityTimers.current.set(path, timer)
+              }
+            } else {
+              const timer = visibilityTimers.current.get(path)
+              if (timer != null) {
+                window.clearTimeout(timer)
+                visibilityTimers.current.delete(path)
+              }
+            }
+          }
+        }
+        if (toAdd.length > 0) {
+          setVisibleFiles((prev) => {
+            const next = new Set(prev)
+            toAdd.forEach((i) => next.add(i))
+            return next
+          })
+        }
+
+        if (!isScrollingFromTreeRef.current) {
+          for (const entry of entries) {
+            if (entry.isIntersecting && entry.intersectionRatio > 0.1) {
+              const path = (entry.target as HTMLElement).dataset.diffFile
+              if (path) {
+                setActiveFile(path)
+                break
+              }
             }
           }
         }
       },
-      { root: container, threshold: [0.3] },
+      { root: container, rootMargin: '200px 0px', threshold: [0, 0.1, 0.3] },
     )
 
-    const elements = container.querySelectorAll('[data-diff-file]')
+    const elements = container.querySelectorAll('[data-diff-file-idx]')
     elements.forEach((el) => observer.observe(el))
 
+    const timers = visibilityTimers.current
     return () => {
       observer.disconnect()
-      if (debounceTimer) clearTimeout(debounceTimer)
+      timers.forEach((t) => window.clearTimeout(t))
+      timers.clear()
     }
-  }, [files.data])
-
-  // Mark files as viewed after 2s of visibility
-  useEffect(() => {
-    const container = scrollContainerRef.current
-    if (!container || !files.data) return
-
-    const viewedObserver = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          const path = (entry.target as HTMLElement).dataset.diffFile
-          if (!path) continue
-
-          if (entry.isIntersecting) {
-            if (!visibilityTimers.current.has(path)) {
-              const timer = window.setTimeout(() => {
-                handleMarkViewed(path)
-                visibilityTimers.current.delete(path)
-              }, 2000)
-              visibilityTimers.current.set(path, timer)
-            }
-          } else {
-            const timer = visibilityTimers.current.get(path)
-            if (timer != null) {
-              window.clearTimeout(timer)
-              visibilityTimers.current.delete(path)
-            }
-          }
-        }
-      },
-      { root: container, threshold: [0.3] },
-    )
-
-    const elements = container.querySelectorAll('[data-diff-file]')
-    elements.forEach((el) => viewedObserver.observe(el))
-
-    return () => {
-      viewedObserver.disconnect()
-      visibilityTimers.current.forEach((timer) => window.clearTimeout(timer))
-      visibilityTimers.current.clear()
-    }
-  }, [files.data, handleMarkViewed])
-
-  const parsedFiles = useMemo(() => {
-    if (!diff.data) return []
-    const patches = parsePatchFiles(diff.data)
-    return patches.flatMap((patch) => patch.files)
-  }, [diff.data])
-
-  const commentsByFile = useMemo(() => {
-    if (!comments.data) return new Map<string, PRComment[]>()
-    const map = new Map<string, PRComment[]>()
-    for (const comment of comments.data) {
-      if (comment.line === null) continue
-      const existing = map.get(comment.path) ?? []
-      existing.push(comment)
-      map.set(comment.path, existing)
-    }
-    return map
-  }, [comments.data])
+  }, [parsedFiles, handleMarkViewed])
 
   if (metadata.isLoading || diff.isLoading) {
     return <DiffLoadingSkeleton />
@@ -404,31 +501,34 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
           viewedFiles={viewedFiles}
           onMarkViewed={handleMarkViewed}
         />
-        <div ref={scrollContainerRef} className="flex-1 flex flex-col gap-4 overflow-auto">
+        <div className="flex-1 flex flex-col overflow-hidden">
           {metadata.data && (
             <PRHeader
               metadata={metadata.data}
               reviews={reviews.data}
               fileCount={files.data?.length ?? metadata.data.changed_files}
               sidebarOpen={sidebarOpen}
-              onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
+              onToggleSidebar={() => {
+                userToggledSidebar.current = true
+                setSidebarOpen((prev) => !prev)
+              }}
             />
           )}
-          <div className="flex flex-col gap-2">
-            {parsedFiles.map((file, i) => (
-              <DiffFileContainer
-                key={file.name ?? i}
-                filename={file.name}
-              >
-                <DiffFile
-                  metadata={file}
-                  comments={commentsByFile.get(file.name) ?? []}
-                  activeComment={
-                    activeComment?.file === file.name ? activeComment : null
-                  }
-                  activeReply={
-                    activeReply?.file === file.name ? activeReply : null
-                  }
+          <WorkerPoolContextProvider
+            poolOptions={WORKER_POOL_OPTIONS}
+            highlighterOptions={WORKER_HIGHLIGHTER_OPTIONS}
+          >
+            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+              {parsedFiles.map((file, idx) => (
+                <LazyFileDiff
+                  key={file.name}
+                  file={file}
+                  index={idx}
+                  visible={visibleFiles.has(idx)}
+                  options={diffOptions}
+                  comments={commentsByPath.get(file.name) ?? EMPTY_COMMENTS}
+                  activeComment={activeComment}
+                  activeReply={activeReply}
                   onStartComment={handleStartComment}
                   onStartReply={handleStartReply}
                   onCancelComment={handleCancelComment}
@@ -436,9 +536,9 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
                   onSubmitReply={handleSubmitReply}
                   isSubmitting={postComment.isPending}
                 />
-              </DiffFileContainer>
-            ))}
-          </div>
+              ))}
+            </div>
+          </WorkerPoolContextProvider>
         </div>
       </div>
 
@@ -453,6 +553,129 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     </>
   )
 }
+
+const LazyFileDiff = memo(function LazyFileDiff({
+  file,
+  index,
+  visible,
+  options,
+  comments,
+  activeComment,
+  activeReply,
+  onStartComment,
+  onStartReply,
+  onCancelComment,
+  onSubmitComment,
+  onSubmitReply,
+  isSubmitting,
+}: {
+  file: FileDiffMetadata
+  index: number
+  visible: boolean
+  options: FileDiffOptions<AnnotationPayload>
+  comments: PRComment[]
+  activeComment: ActiveComment | null
+  activeReply: { file: string; line: number; side: 'additions' | 'deletions'; parentId: number } | null
+  onStartComment: (file: string, line: number, side: 'additions' | 'deletions') => void
+  onStartReply: (file: string, line: number, side: 'additions' | 'deletions', parentId: number) => void
+  onCancelComment: () => void
+  onSubmitComment: (body: string, path: string, line: number, side: 'additions' | 'deletions') => void
+  onSubmitReply: (body: string, path: string, line: number, side: 'additions' | 'deletions', parentId: number) => void
+  isSubmitting: boolean
+}) {
+  const annotations = useMemo(() =>
+    buildAnnotationsForFile(file.name, comments, activeComment, activeReply),
+    [file.name, comments, activeComment, activeReply],
+  )
+
+  const renderAnnotation = useCallback(
+    (annotation: DiffLineAnnotation<AnnotationPayload>) => {
+      const payload = annotation.metadata
+      if (!payload) return null
+
+      if (payload.form) {
+        return (
+          <CommentForm
+            onSubmit={(body) => onSubmitComment(body, payload.form!.file, payload.form!.line, payload.form!.side)}
+            onCancel={onCancelComment}
+            isSubmitting={isSubmitting}
+            placeholder="Add a comment..."
+          />
+        )
+      }
+
+      if (payload.reply) {
+        return (
+          <CommentForm
+            onSubmit={(body) => onSubmitReply(body, payload.reply!.file, payload.reply!.line, payload.reply!.side, payload.reply!.parentId)}
+            onCancel={onCancelComment}
+            isSubmitting={isSubmitting}
+            placeholder="Reply..."
+          />
+        )
+      }
+
+      if (payload.comment) {
+        const comment = payload.comment
+        const side = comment.side === 'LEFT' ? 'deletions' as const : 'additions' as const
+        return (
+          <ExistingComment
+            comment={comment}
+            onReply={() => onStartReply(comment.path, comment.line!, side, comment.id)}
+          />
+        )
+      }
+
+      return null
+    },
+    [onSubmitComment, onSubmitReply, onCancelComment, onStartReply, isSubmitting],
+  )
+
+  const renderGutterUtility = useCallback(
+    (getHoveredLine: () => { lineNumber: number; side: string } | undefined) => (
+      <button
+        className="diffs-gutter-add-comment"
+        onClick={(e) => {
+          e.stopPropagation()
+          const hovered = getHoveredLine()
+          if (hovered) {
+            onStartComment(file.name, hovered.lineNumber, hovered.side as 'additions' | 'deletions')
+          }
+        }}
+      >
+        +
+      </button>
+    ),
+    [onStartComment, file.name],
+  )
+
+  if (!visible) {
+    return (
+      <div
+        data-diff-file={file.name}
+        data-diff-file-idx={index}
+        className="border rounded overflow-hidden"
+        style={{ minHeight: 60 }}
+      >
+        <div className="h-10 bg-muted/40 border-b flex items-center px-3 gap-2">
+          <span className="text-xs text-muted-foreground font-mono truncate">{file.name}</span>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div data-diff-file={file.name} data-diff-file-idx={index}>
+      <FileDiff<AnnotationPayload>
+        fileDiff={file}
+        options={options}
+        lineAnnotations={annotations}
+        renderAnnotation={renderAnnotation}
+        renderGutterUtility={renderGutterUtility}
+      />
+    </div>
+  )
+})
 
 function PRHeader({
   metadata,
@@ -499,7 +722,7 @@ function PRHeader({
         </div>
       </div>
 
-      <div className="flex items-center gap-4 text-sm">
+      <div className="flex flex-wrap items-center gap-4 gap-y-2 text-sm">
         <span className="text-green-600 font-medium">
           +{metadata.additions}
         </span>
@@ -511,7 +734,7 @@ function PRHeader({
         </span>
 
         {reviews && reviews.length > 0 && (
-          <div className="flex items-center gap-1 ml-auto">
+          <div className="flex flex-wrap items-center gap-1 gap-y-2 ml-auto">
             {reviews.map((review) => (
               <ReviewBadge key={review.id} review={review} />
             ))}
@@ -545,7 +768,8 @@ function ReviewBadge({ review }: { review: PRReview }) {
   )
 }
 
-function buildAnnotations(
+function buildAnnotationsForFile(
+  filename: string,
   comments: PRComment[],
   activeComment: ActiveComment | null,
   activeReply: { file: string; line: number; side: 'additions' | 'deletions'; parentId: number } | null,
@@ -558,7 +782,7 @@ function buildAnnotations(
       metadata: { comment },
     }))
 
-  if (activeComment) {
+  if (activeComment && activeComment.file === filename) {
     annotations.push({
       side: activeComment.side,
       lineNumber: activeComment.line,
@@ -573,7 +797,7 @@ function buildAnnotations(
     })
   }
 
-  if (activeReply) {
+  if (activeReply && activeReply.file === filename) {
     annotations.push({
       side: activeReply.side,
       lineNumber: activeReply.line,
@@ -592,167 +816,16 @@ function buildAnnotations(
   return annotations
 }
 
-function createAnnotationRenderer(callbacks: {
-  onSubmitComment: (body: string, path: string, line: number, side: 'additions' | 'deletions') => void
-  onSubmitReply: (body: string, path: string, line: number, side: 'additions' | 'deletions', parentId: number) => void
-  onCancel: () => void
-  onStartReply: (file: string, line: number, side: 'additions' | 'deletions', parentId: number) => void
-  isSubmitting: boolean
-}) {
-  return function renderAnnotation(
-    annotation: DiffLineAnnotation<AnnotationPayload>,
-  ): HTMLElement | undefined {
-    const payload = annotation.metadata
-    if (!payload) return undefined
-
-    if (payload.form) {
-      const { form } = payload
-      return createCommentForm({
-        onSubmit: (body) => callbacks.onSubmitComment(body, form.file, form.line, form.side),
-        onCancel: callbacks.onCancel,
-        isSubmitting: callbacks.isSubmitting,
-        placeholder: 'Add a comment...',
-      })
+function findFirstAddedLine(file: FileDiffMetadata | undefined): number {
+  if (!file) return 1
+  for (const hunk of file.hunks) {
+    for (const content of hunk.hunkContent) {
+      if (content.type === 'change' && content.additions > 0) {
+        return hunk.additionStart + (content.additionLineIndex - hunk.additionLineIndex)
+      }
     }
-
-    if (payload.reply) {
-      const { reply } = payload
-      return createCommentForm({
-        onSubmit: (body) => callbacks.onSubmitReply(body, reply.file, reply.line, reply.side, reply.parentId),
-        onCancel: callbacks.onCancel,
-        isSubmitting: callbacks.isSubmitting,
-        placeholder: 'Reply...',
-      })
-    }
-
-    if (payload.comment) {
-      return renderExistingComment(payload.comment, callbacks.onStartReply)
-    }
-
-    return undefined
   }
-}
-
-function renderExistingComment(
-  comment: PRComment,
-  onStartReply: (file: string, line: number, side: 'additions' | 'deletions', parentId: number) => void,
-): HTMLElement {
-  const wrapper = document.createElement('div')
-  wrapper.style.padding = '8px 12px'
-  wrapper.style.margin = '4px 0'
-  wrapper.style.borderRadius = '6px'
-  wrapper.style.border = '1px solid var(--border, #d0d7de)'
-  wrapper.style.backgroundColor = 'var(--muted, #f6f8fa)'
-  wrapper.style.fontSize = '13px'
-  wrapper.style.lineHeight = '1.4'
-
-  if (comment.in_reply_to_id) {
-    wrapper.style.marginLeft = '16px'
-    wrapper.style.borderLeftWidth = '3px'
-  }
-
-  const header = document.createElement('div')
-  header.style.display = 'flex'
-  header.style.alignItems = 'center'
-  header.style.gap = '6px'
-  header.style.marginBottom = '4px'
-
-  const avatar = document.createElement('img')
-  avatar.src = comment.user.avatar_url
-  avatar.alt = comment.user.login
-  avatar.style.width = '20px'
-  avatar.style.height = '20px'
-  avatar.style.borderRadius = '50%'
-  header.appendChild(avatar)
-
-  const author = document.createElement('span')
-  author.style.fontWeight = '600'
-  author.textContent = comment.user.login
-  header.appendChild(author)
-
-  const time = document.createElement('span')
-  time.style.color = 'var(--muted-foreground, #656d76)'
-  time.style.fontSize = '12px'
-  time.textContent = formatRelativeTime(comment.created_at)
-  header.appendChild(time)
-
-  wrapper.appendChild(header)
-
-  const body = document.createElement('div')
-  body.textContent = comment.body
-  body.style.whiteSpace = 'pre-wrap'
-  wrapper.appendChild(body)
-
-  if (!comment.in_reply_to_id) {
-    const replyBtn = document.createElement('button')
-    replyBtn.textContent = 'Reply'
-    replyBtn.className = 'diffs-reply-btn'
-    replyBtn.onclick = (e) => {
-      e.stopPropagation()
-      const side = comment.side === 'LEFT' ? 'deletions' as const : 'additions' as const
-      onStartReply(comment.path, comment.line!, side, comment.id)
-    }
-    wrapper.appendChild(replyBtn)
-  }
-
-  return wrapper
-}
-
-function createCommentForm(options: {
-  onSubmit: (body: string) => void
-  onCancel: () => void
-  isSubmitting: boolean
-  placeholder: string
-}): HTMLElement {
-  const wrapper = document.createElement('div')
-  wrapper.className = 'diffs-comment-form'
-
-  const textarea = document.createElement('textarea')
-  textarea.placeholder = options.placeholder
-  textarea.className = 'diffs-comment-textarea'
-  textarea.rows = 3
-
-  textarea.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault()
-      const value = textarea.value.trim()
-      if (value) options.onSubmit(value)
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      options.onCancel()
-    }
-  })
-
-  const buttonRow = document.createElement('div')
-  buttonRow.className = 'diffs-comment-form-buttons'
-
-  const cancelBtn = document.createElement('button')
-  cancelBtn.textContent = 'Cancel'
-  cancelBtn.className = 'diffs-comment-cancel-btn'
-  cancelBtn.onclick = (e) => {
-    e.stopPropagation()
-    options.onCancel()
-  }
-
-  const submitBtn = document.createElement('button')
-  submitBtn.textContent = options.isSubmitting ? 'Posting...' : 'Comment'
-  submitBtn.className = 'diffs-comment-submit-btn'
-  submitBtn.disabled = options.isSubmitting
-  submitBtn.onclick = (e) => {
-    e.stopPropagation()
-    const value = textarea.value.trim()
-    if (value) options.onSubmit(value)
-  }
-
-  buttonRow.appendChild(cancelBtn)
-  buttonRow.appendChild(submitBtn)
-  wrapper.appendChild(textarea)
-  wrapper.appendChild(buttonRow)
-
-  requestAnimationFrame(() => textarea.focus())
-
-  return wrapper
+  return 1
 }
 
 function formatRelativeTime(dateStr: string): string {
@@ -769,108 +842,84 @@ function formatRelativeTime(dateStr: string): string {
   return date.toLocaleDateString()
 }
 
-function DiffFile({
-  metadata,
-  comments,
-  activeComment,
-  activeReply,
-  onStartComment,
-  onStartReply,
-  onCancelComment,
-  onSubmitComment,
-  onSubmitReply,
+function CommentForm({
+  onSubmit,
+  onCancel,
   isSubmitting,
+  placeholder,
 }: {
-  metadata: FileDiffMetadata
-  comments: PRComment[]
-  activeComment: ActiveComment | null
-  activeReply: { file: string; line: number; side: 'additions' | 'deletions'; parentId: number } | null
-  onStartComment: (file: string, line: number, side: 'additions' | 'deletions') => void
-  onStartReply: (file: string, line: number, side: 'additions' | 'deletions', parentId: number) => void
-  onCancelComment: () => void
-  onSubmitComment: (body: string, path: string, line: number, side: 'additions' | 'deletions') => void
-  onSubmitReply: (body: string, path: string, line: number, side: 'additions' | 'deletions', parentId: number) => void
+  onSubmit: (body: string) => void
+  onCancel: () => void
   isSubmitting: boolean
+  placeholder: string
 }) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const instanceRef = useRef<FileDiff<AnnotationPayload> | null>(null)
-  const callbacksRef = useRef({ onStartComment, onStartReply, onCancelComment, onSubmitComment, onSubmitReply, isSubmitting })
-
-  callbacksRef.current = { onStartComment, onStartReply, onCancelComment, onSubmitComment, onSubmitReply, isSubmitting }
-
-  const lineAnnotations = useMemo(
-    () => buildAnnotations(comments, activeComment, activeReply),
-    [comments, activeComment, activeReply],
-  )
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    if (!containerRef.current) return
+    textareaRef.current?.focus()
+  }, [])
 
-    const themeType = getInitialThemeType()
-    const fileName = metadata.name
-
-    const renderAnnotation = createAnnotationRenderer({
-      onSubmitComment: (...args) => callbacksRef.current.onSubmitComment(...args),
-      onSubmitReply: (...args) => callbacksRef.current.onSubmitReply(...args),
-      onCancel: () => callbacksRef.current.onCancelComment(),
-      onStartReply: (...args) => callbacksRef.current.onStartReply(...args),
-      isSubmitting: callbacksRef.current.isSubmitting,
-    })
-
-    const instance = new FileDiff<AnnotationPayload>({
-      theme: THEMES,
-      themeType,
-      diffStyle: 'split',
-      renderAnnotation,
-      renderGutterUtility(getHoveredRow) {
-        const btn = document.createElement('button')
-        btn.textContent = '+'
-        btn.className = 'diffs-gutter-add-comment'
-        btn.onclick = (e) => {
-          e.stopPropagation()
-          const hovered = getHoveredRow()
-          if (hovered) {
-            callbacksRef.current.onStartComment(
-              fileName,
-              hovered.lineNumber,
-              hovered.side as 'additions' | 'deletions',
-            )
+  return (
+    <div className="diffs-comment-form">
+      <textarea
+        ref={textareaRef}
+        className="diffs-comment-textarea"
+        placeholder={placeholder}
+        rows={3}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault()
+            const value = textareaRef.current?.value.trim()
+            if (value) onSubmit(value)
           }
-        }
-        return btn
-      },
-    })
-
-    instance.render({
-      fileDiff: metadata,
-      fileContainer: containerRef.current,
-      lineAnnotations,
-    })
-
-    instanceRef.current = instance
-
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-    const handleThemeChange = () => {
-      instance.onThemeChange()
-    }
-    mediaQuery.addEventListener('change', handleThemeChange)
-
-    return () => {
-      mediaQuery.removeEventListener('change', handleThemeChange)
-      if (containerRef.current) {
-        containerRef.current.innerHTML = ''
-      }
-      instanceRef.current = null
-    }
-  }, [metadata, lineAnnotations])
-
-  return <div ref={containerRef} className="border rounded overflow-hidden" />
+          if (e.key === 'Escape') {
+            e.preventDefault()
+            onCancel()
+          }
+        }}
+      />
+      <div className="diffs-comment-form-buttons">
+        <button className="diffs-comment-cancel-btn" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          className="diffs-comment-submit-btn"
+          disabled={isSubmitting}
+          onClick={() => {
+            const value = textareaRef.current?.value.trim()
+            if (value) onSubmit(value)
+          }}
+        >
+          {isSubmitting ? 'Posting...' : 'Comment'}
+        </button>
+      </div>
+    </div>
+  )
 }
 
-function DiffFileContainer({ filename, children }: { filename: string; children: React.ReactNode }) {
+function ExistingComment({
+  comment,
+  onReply,
+}: {
+  comment: PRComment
+  onReply: () => void
+}) {
   return (
-    <div data-diff-file={filename}>
-      {children}
+    <div
+      className="diffs-existing-comment"
+      style={comment.in_reply_to_id ? { marginLeft: 16, borderLeftWidth: 3 } : undefined}
+    >
+      <div className="diffs-comment-header">
+        <img src={comment.user.avatar_url} alt={comment.user.login} className="diffs-comment-avatar" />
+        <span className="diffs-comment-author">{comment.user.login}</span>
+        <span className="diffs-comment-time">{formatRelativeTime(comment.created_at)}</span>
+      </div>
+      <div className="diffs-comment-body">{comment.body}</div>
+      {!comment.in_reply_to_id && (
+        <button className="diffs-reply-btn" onClick={onReply}>
+          Reply
+        </button>
+      )}
     </div>
   )
 }
@@ -878,7 +927,6 @@ function DiffFileContainer({ filename, children }: { filename: string; children:
 function DiffLoadingSkeleton() {
   return (
     <div className="flex flex-col gap-4 p-4">
-      {/* PR header skeleton */}
       <div className="animate-pulse border rounded-lg p-4 bg-card">
         <div className="flex items-center gap-3 mb-3">
           <div className="w-8 h-8 rounded-full bg-muted" />
@@ -894,7 +942,6 @@ function DiffLoadingSkeleton() {
         </div>
       </div>
 
-      {/* File diff skeletons */}
       {[280, 180, 220].map((height, i) => (
         <div key={i} className="animate-pulse border rounded overflow-hidden">
           <div className="h-10 bg-muted/70 border-b flex items-center px-3 gap-2">
@@ -919,12 +966,12 @@ function DiffLoadingSkeleton() {
   )
 }
 
-function getErrorDetails(error: Error | null): {
+function getErrorDetails(error: unknown): {
   message: string
   showSettings: boolean
   retryDelay?: string
 } {
-  const msg = error?.message ?? 'Unknown error'
+  const msg = error instanceof Error ? error.message : typeof error === 'string' ? error : 'Unknown error'
 
   if (/token.*invalid|token.*expired|unauthorized|401/i.test(msg)) {
     return {
@@ -955,7 +1002,7 @@ function ErrorCard({
   error,
   onRetry,
 }: {
-  error: Error | null
+  error: unknown
   onRetry: () => void
 }) {
   const details = getErrorDetails(error)
