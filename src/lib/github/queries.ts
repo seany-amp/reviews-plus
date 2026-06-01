@@ -6,10 +6,15 @@ async function githubFetch<T>(
   endpoint: string,
   options?: { accept?: string; method?: string; body?: string },
 ): Promise<T> {
-  const result = await invoke<string | T>('github_fetch', {
-    endpoint,
-    ...options,
-  })
+  let result: string | T
+  try {
+    result = await invoke<string | T>('github_fetch', {
+      endpoint,
+      ...options,
+    })
+  } catch (err) {
+    throw new Error(typeof err === 'string' ? err : String(err))
+  }
   if (typeof result === 'string') {
     return JSON.parse(result) as T
   }
@@ -17,10 +22,43 @@ async function githubFetch<T>(
 }
 
 async function githubFetchDiff(endpoint: string): Promise<string> {
-  return invoke<string>('github_fetch', {
-    endpoint,
-    accept: 'application/vnd.github.diff',
-  })
+  try {
+    return await invoke<string>('github_fetch', {
+      endpoint,
+      accept: 'application/vnd.github.diff',
+    })
+  } catch (err) {
+    const msg = typeof err === 'string' ? err : String(err)
+    if (msg.includes('406') || msg.includes('too_large')) {
+      return fetchDiffFromFiles(endpoint)
+    }
+    throw new Error(msg)
+  }
+}
+
+async function fetchDiffFromFiles(prEndpoint: string): Promise<string> {
+  const files = await fetchAllFiles(prEndpoint)
+  return files
+    .filter((f) => f.patch)
+    .map((f) => {
+      const header = `diff --git a/${f.filename} b/${f.filename}\n--- a/${f.filename}\n+++ b/${f.filename}\n`
+      return header + f.patch
+    })
+    .join('\n')
+}
+
+async function fetchAllFiles(prEndpoint: string): Promise<PRFile[]> {
+  const allFiles: PRFile[] = []
+  let page = 1
+  while (true) {
+    const batch = await githubFetch<PRFile[]>(
+      `${prEndpoint}/files?per_page=100&page=${page}`,
+    )
+    allFiles.push(...batch)
+    if (batch.length < 100) break
+    page++
+  }
+  return allFiles
 }
 
 export function usePRMetadata(owner: string, repo: string, number: number) {

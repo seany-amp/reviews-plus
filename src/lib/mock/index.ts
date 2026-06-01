@@ -1,6 +1,21 @@
-import { prMetadata, prFiles, prComments, prReviews, prDiff } from './fixtures';
+import {
+  prMetadata,
+  prFiles,
+  prComments,
+  prReviews,
+  prDiff,
+  stressMetadata,
+  stressFiles,
+  stressDiff,
+} from './fixtures';
 
 type InvokeArgs = Record<string, unknown>;
+
+function isStressMode(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (window.localStorage?.getItem('reviews-plus:stress') === '1') return true;
+  return new URLSearchParams(window.location.search).get('stress') === '1';
+}
 
 const searchIssuesFixture = {
   items: [
@@ -50,9 +65,34 @@ function resolveGithubFetch(args: InvokeArgs): unknown {
     throw new Error('[mockInvoke] github_fetch requires an "endpoint" argument');
   }
 
+  const stress = isStressMode();
   const accept = args.accept as string | undefined;
+
   if (accept && accept.includes('diff')) {
+    // Mirror GitHub's real behavior on huge PRs: the unified-diff endpoint
+    // returns 406, forcing the app's per-file reconstruction fallback.
+    if (stress) {
+      throw new Error(
+        'GitHub API error (406): Sorry, the diff exceeded the maximum number of lines (20000)',
+      );
+    }
     return prDiff;
+  }
+
+  if (/\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/files/.test(endpoint)) {
+    if (!stress) return prFiles;
+    // Honor pagination so the app's fetchAllFiles loop terminates.
+    const all = stressFiles as unknown[];
+    const pageMatch = endpoint.match(/[?&]page=(\d+)/);
+    const perMatch = endpoint.match(/[?&]per_page=(\d+)/);
+    if (!pageMatch) return all;
+    const page = Number(pageMatch[1]);
+    const per = perMatch ? Number(perMatch[1]) : 100;
+    const start = (page - 1) * per;
+    return all.slice(start, start + per);
+  }
+  if (/\/repos\/[^/]+\/[^/]+\/pulls\/\d+$/.test(endpoint)) {
+    return stress ? stressMetadata : prMetadata;
   }
 
   for (const { pattern, fixture } of ENDPOINT_PATTERNS) {
