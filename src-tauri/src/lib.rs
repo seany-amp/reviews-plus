@@ -9,6 +9,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             github::github_fetch,
+            github::github_graphql,
             local_diff::local_diff,
         ])
         .run(tauri::generate_context!())

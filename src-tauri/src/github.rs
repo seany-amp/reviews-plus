@@ -61,3 +61,42 @@ pub async fn github_fetch(
         _ => Err(format!("GitHub API error ({status}): {response_body}")),
     }
 }
+
+#[tauri::command]
+pub async fn github_graphql(app: tauri::AppHandle, body: String) -> Result<String, String> {
+    let store = app
+        .store("settings.json")
+        .map_err(|e| format!("Failed to open store: {e}"))?;
+
+    let token = store
+        .get("github-pat")
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .ok_or_else(|| "No GitHub token found. Please store a token first.".to_string())?;
+
+    let client = Client::new();
+
+    let response = client
+        .post("https://api.github.com/graphql")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+        .header("User-Agent", "reviews-plus")
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
+
+    let status = response.status();
+    let response_body = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response body: {e}"))?;
+
+    match status.as_u16() {
+        200..=299 => Ok(response_body),
+        401 => Err("Token invalid or expired".to_string()),
+        403 => Err("Rate limited".to_string()),
+        404 => Err("Not found".to_string()),
+        _ => Err(format!("GitHub API error ({status}): {response_body}")),
+    }
+}
