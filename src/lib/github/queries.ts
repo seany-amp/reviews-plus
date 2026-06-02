@@ -1,6 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@/lib/mock/invoke'
-import type { PRMetadata, PRFile, PRComment, PRReview, SearchIssueItem } from './types'
+import type {
+  PRMetadata,
+  PRFile,
+  PRComment,
+  PRReview,
+  PRReviewThread,
+  SearchIssueItem,
+} from './types'
 
 async function githubFetch<T>(
   endpoint: string,
@@ -19,6 +26,25 @@ async function githubFetch<T>(
     return JSON.parse(result) as T
   }
   return result as T
+}
+
+async function githubGraphQL<T>(
+  query: string,
+  variables: Record<string, unknown>,
+): Promise<T> {
+  let raw: string
+  try {
+    raw = await invoke<string>('github_graphql', {
+      body: JSON.stringify({ query, variables }),
+    })
+  } catch (err) {
+    throw new Error(typeof err === 'string' ? err : String(err))
+  }
+  const parsed = JSON.parse(raw) as { data?: T; errors?: Array<{ message: string }> }
+  if (parsed.errors?.length) {
+    throw new Error(parsed.errors.map((e) => e.message).join('; '))
+  }
+  return parsed.data as T
 }
 
 async function githubFetchDiff(endpoint: string): Promise<string> {
@@ -112,6 +138,49 @@ export function usePRReviews(owner: string, repo: string, number: number) {
   })
 }
 
+const REVIEW_THREADS_QUERY = `
+  query ($owner: String!, $repo: String!, $number: Int!) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $number) {
+        reviewThreads(first: 100) {
+          nodes {
+            isResolved
+            isOutdated
+            comments(first: 100) {
+              nodes {
+                databaseId
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`
+
+interface ReviewThreadsResponse {
+  repository: {
+    pullRequest: {
+      reviewThreads: { nodes: PRReviewThread[] }
+    } | null
+  } | null
+}
+
+export function usePRReviewThreads(owner: string, repo: string, number: number) {
+  return useQuery({
+    queryKey: ['pr', owner, repo, number, 'threads'],
+    queryFn: async () => {
+      const data = await githubGraphQL<ReviewThreadsResponse>(REVIEW_THREADS_QUERY, {
+        owner,
+        repo,
+        number,
+      })
+      return data.repository?.pullRequest?.reviewThreads.nodes ?? []
+    },
+    staleTime: 15_000,
+  })
+}
+
 export function useMyPRs() {
   return useQuery({
     queryKey: ['my-prs'],
@@ -124,21 +193,26 @@ export function useMyPRs() {
   })
 }
 
+interface PostCommentParams {
+  body: string
+  path: string
+  line: number
+  commit_id: string
+  side?: string
+  start_line?: number
+  start_side?: string
+  in_reply_to?: number
+}
+
 export function usePostComment(
   owner: string,
   repo: string,
   number: number,
 ) {
   const queryClient = useQueryClient()
+  const commentsKey = ['pr', owner, repo, number, 'comments'] as const
   return useMutation({
-    mutationFn: (params: {
-      body: string
-      path: string
-      line: number
-      commit_id: string
-      side?: string
-      in_reply_to?: number
-    }) =>
+    mutationFn: (params: PostCommentParams) =>
       githubFetch<PRComment>(
         `/repos/${owner}/${repo}/pulls/${number}/comments`,
         {
@@ -146,10 +220,31 @@ export function usePostComment(
           body: JSON.stringify(params),
         },
       ),
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ['pr', owner, repo, number, 'comments'],
-      })
+    onMutate: async (params): Promise<{ previous: PRComment[] | undefined; tempId: number }> => {
+      await queryClient.cancelQueries({ queryKey: commentsKey })
+      const previous = queryClient.getQueryData<PRComment[]>(commentsKey)
+      const tempId = -Date.now()
+      const optimistic: PRComment = {
+        id: tempId,
+        user: { login: 'You', avatar_url: '' },
+        body: params.body,
+        path: params.path,
+        line: params.line,
+        start_line: params.start_line ?? null,
+        side: params.side ?? 'RIGHT',
+        created_at: new Date().toISOString(),
+        ...(params.in_reply_to != null ? { in_reply_to_id: params.in_reply_to } : {}),
+      }
+      queryClient.setQueryData<PRComment[]>(commentsKey, (old) => [...(old ?? []), optimistic])
+      return { previous, tempId }
+    },
+    onError: (_err, _params, context) => {
+      if (context?.previous !== undefined) {
+        queryClient.setQueryData(commentsKey, context.previous)
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: commentsKey })
     },
   })
 }

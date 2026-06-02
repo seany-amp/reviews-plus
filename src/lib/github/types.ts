@@ -30,7 +30,9 @@ export interface PRComment {
   body: string
   path: string
   line: number | null
+  start_line?: number | null
   side: string // "LEFT" | "RIGHT"
+  start_side?: string // "LEFT" | "RIGHT"
   created_at: string
   in_reply_to_id?: number
 }
@@ -41,6 +43,12 @@ export interface PRReview {
   state: string // "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING"
   body: string | null
   submitted_at: string
+}
+
+export interface PRReviewThread {
+  isResolved: boolean
+  isOutdated: boolean
+  comments: { nodes: Array<{ databaseId: number | null }> }
 }
 
 export interface SearchIssueItem {

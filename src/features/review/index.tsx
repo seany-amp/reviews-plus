@@ -5,6 +5,7 @@ import {
   usePRFiles,
   usePRReviews,
   usePRComments,
+  usePRReviewThreads,
   usePostComment,
 } from '@/lib/github'
 import { parsePatchFiles, preloadHighlighter } from '@pierre/diffs'
@@ -21,6 +22,7 @@ import type {
   GetHoveredLineResult,
   ThemesType,
   DiffLineAnnotation,
+  SelectedLineRange,
 } from '@pierre/diffs'
 
 type CodeViewInstance = NonNullable<
@@ -37,17 +39,20 @@ import {
 import type { PRIdentifier } from '@/lib/github/parse-url'
 import type { PRMetadata, PRReview, PRComment } from '@/lib/github/types'
 import { toast } from 'sonner'
-import { AlertTriangle, PanelLeft, Settings } from 'lucide-react'
+import { AlertTriangle, MessageSquare, PanelLeft, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts'
 import { FilePalette } from '@/components/file-palette'
 import { ShortcutsHelp } from '@/components/shortcuts-help'
 import { FileTreeSidebar } from '@/components/file-tree-sidebar'
+import { CommentsPanel } from '@/components/comments-panel'
 
 interface ActiveComment {
   file: string
   line: number
   side: 'additions' | 'deletions'
+  startLine?: number
+  startSide?: 'additions' | 'deletions'
 }
 
 interface CommentFormMarker {
@@ -55,6 +60,8 @@ interface CommentFormMarker {
   file: string
   line: number
   side: 'additions' | 'deletions'
+  startLine?: number
+  startSide?: 'additions' | 'deletions'
 }
 
 interface ReplyFormMarker {
@@ -104,7 +111,24 @@ const DIFF_OPTIONS: CodeViewOptions<AnnotationPayload> = {
   expandUnchanged: true,
   overflow: 'scroll',
   stickyHeaders: true,
+  enableLineSelection: true,
   layout: { gap: 16, paddingTop: 0, paddingBottom: 0 },
+}
+
+type CommentSide = 'additions' | 'deletions'
+
+function resolveSelectionRange(range: SelectedLineRange): {
+  line: number
+  side: CommentSide
+  startLine: number
+  startSide: CommentSide
+} {
+  const startSide = range.side ?? 'additions'
+  const endSide = range.endSide ?? startSide
+  if (range.end >= range.start) {
+    return { startLine: range.start, startSide, line: range.end, side: endSide }
+  }
+  return { startLine: range.end, startSide: endSide, line: range.start, side: startSide }
 }
 
 export function ReviewView({ pr }: ReviewViewProps) {
@@ -143,6 +167,7 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   const files = usePRFiles(owner, repo, number)
   const reviews = usePRReviews(owner, repo, number)
   const comments = usePRComments(owner, repo, number)
+  const reviewThreads = usePRReviewThreads(owner, repo, number)
   const postComment = usePostComment(owner, repo, number)
 
   const [activeComment, setActiveComment] = useState<ActiveComment | null>(null)
@@ -183,6 +208,7 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   const [filePaletteOpen, setFilePaletteOpen] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [commentsPanelOpen, setCommentsPanelOpen] = useState(false)
   const userToggledSidebar = useRef(false)
   const [activeFile, setActiveFile] = useState<string | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -242,6 +268,24 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     [parsedFiles],
   )
 
+  // GraphQL reviewThreads carry resolved/outdated state keyed by each comment's
+  // databaseId, which equals the REST comment id. Derive id->state maps rather
+  // than denormalizing onto PRComment so the REST shape stays untouched.
+  const threadStateById = useMemo(() => {
+    const resolved = new Map<number, boolean>()
+    const outdated = new Map<number, boolean>()
+    for (const thread of reviewThreads.data ?? []) {
+      for (const node of thread.comments.nodes) {
+        if (node.databaseId == null) continue
+        resolved.set(node.databaseId, thread.isResolved)
+        outdated.set(node.databaseId, thread.isOutdated)
+      }
+    }
+    return { resolved, outdated }
+  }, [reviewThreads.data])
+
+  const fileNameOrder = useMemo(() => parsedFiles.map((f) => f.name), [parsedFiles])
+
   const annotationsByFile = useMemo(() => {
     const m = new Map<string, DiffLineAnnotation<AnnotationPayload>[]>()
     for (const file of parsedFiles) {
@@ -288,7 +332,13 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   const handleStartComment = useCallback(
     (file: string, line: number, side: 'additions' | 'deletions') => {
       setActiveReply(null)
-      setActiveComment({ file, line, side })
+      const selection = codeViewRef.current?.getSelectedLines()
+      if (selection && selection.id === file && selection.range.start !== selection.range.end) {
+        const r = resolveSelectionRange(selection.range)
+        setActiveComment({ file, line: r.line, side: r.side, startLine: r.startLine, startSide: r.startSide })
+      } else {
+        setActiveComment({ file, line, side })
+      }
     },
     [],
   )
@@ -307,9 +357,17 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   }, [])
 
   const handleSubmitComment = useCallback(
-    (body: string, path: string, line: number, side: 'additions' | 'deletions') => {
+    (
+      body: string,
+      path: string,
+      line: number,
+      side: 'additions' | 'deletions',
+      startLine?: number,
+      startSide?: 'additions' | 'deletions',
+    ) => {
       if (!metadata.data) return
       const ghSide = side === 'deletions' ? 'LEFT' : 'RIGHT'
+      const hasRange = startLine != null && startLine !== line
       postComment.mutate(
         {
           body,
@@ -317,10 +375,17 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
           line,
           commit_id: metadata.data.head.sha,
           side: ghSide,
+          ...(hasRange
+            ? {
+                start_line: startLine,
+                start_side: (startSide ?? side) === 'deletions' ? 'LEFT' : 'RIGHT',
+              }
+            : {}),
         },
         {
           onSuccess: () => {
             setActiveComment(null)
+            codeViewRef.current?.clearSelectedLines()
             toast.success('Comment posted')
           },
           onError: (err) => {
@@ -353,6 +418,34 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
           onError: (err) => {
             toast.error(`Failed to post reply: ${err.message}`)
           },
+        },
+      )
+    },
+    [metadata.data, postComment],
+  )
+
+  const handlePanelReply = useCallback(
+    (
+      rootId: number,
+      path: string,
+      line: number,
+      side: 'additions' | 'deletions',
+      body: string,
+    ) => {
+      if (!metadata.data) return
+      const ghSide = side === 'deletions' ? 'LEFT' : 'RIGHT'
+      postComment.mutate(
+        {
+          body,
+          path,
+          line,
+          commit_id: metadata.data.head.sha,
+          side: ghSide,
+          in_reply_to: rootId,
+        },
+        {
+          onSuccess: () => toast.success('Reply posted'),
+          onError: (err) => toast.error(`Failed to post reply: ${err.message}`),
         },
       )
     },
@@ -396,6 +489,27 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     [scrollToItem],
   )
 
+  const scrollToComment = useCallback(
+    (path: string, line: number, side: 'additions' | 'deletions') => {
+      if (!fileIndex.has(path)) return
+      isScrollingFromTreeRef.current = true
+      codeViewRef.current?.scrollTo({
+        type: 'line',
+        id: path,
+        lineNumber: line,
+        side,
+        align: 'center',
+        behavior: 'smooth',
+      } satisfies CodeViewScrollTarget)
+      const idx = fileIndex.get(path)
+      if (idx != null) setCurrentFileIndex(idx)
+      setTimeout(() => {
+        isScrollingFromTreeRef.current = false
+      }, 500)
+    },
+    [fileIndex],
+  )
+
   const renderAnnotation = useCallback(
     (
       annotation: DiffLineAnnotation<AnnotationPayload>,
@@ -407,7 +521,7 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
       if (payload.form) {
         return (
           <CommentForm
-            onSubmit={(body) => handleSubmitComment(body, payload.form!.file, payload.form!.line, payload.form!.side)}
+            onSubmit={(body) => handleSubmitComment(body, payload.form!.file, payload.form!.line, payload.form!.side, payload.form!.startLine, payload.form!.startSide)}
             onCancel={handleCancelComment}
             isSubmitting={postComment.isPending}
             placeholder="Add a comment..."
@@ -616,6 +730,8 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
                 userToggledSidebar.current = true
                 setSidebarOpen((prev) => !prev)
               }}
+              commentsPanelOpen={commentsPanelOpen}
+              onToggleCommentsPanel={() => setCommentsPanelOpen((prev) => !prev)}
             />
           )}
           <WorkerPoolContextProvider
@@ -634,6 +750,17 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
             />
           </WorkerPoolContextProvider>
         </div>
+        {commentsPanelOpen && (
+          <CommentsPanel
+            fileOrder={fileNameOrder}
+            commentsByPath={commentsByPath}
+            resolvedById={threadStateById.resolved}
+            outdatedById={threadStateById.outdated}
+            onGoToComment={scrollToComment}
+            onSubmitReply={handlePanelReply}
+            isSubmitting={postComment.isPending}
+          />
+        )}
       </div>
 
       <FilePalette
@@ -654,12 +781,16 @@ function PRHeader({
   fileCount,
   sidebarOpen,
   onToggleSidebar,
+  commentsPanelOpen,
+  onToggleCommentsPanel,
 }: {
   metadata: PRMetadata
   reviews: PRReview[] | undefined
   fileCount: number
   sidebarOpen: boolean
   onToggleSidebar: () => void
+  commentsPanelOpen: boolean
+  onToggleCommentsPanel: () => void
 }) {
   return (
     <div className="border rounded-lg p-4 bg-card">
@@ -691,6 +822,15 @@ function PRHeader({
             </code>
           </p>
         </div>
+        <Button
+          variant={commentsPanelOpen ? 'secondary' : 'ghost'}
+          size="icon"
+          className="size-8 flex-shrink-0"
+          onClick={onToggleCommentsPanel}
+          title={commentsPanelOpen ? 'Hide comments' : 'Show comments'}
+        >
+          <MessageSquare className="size-4" />
+        </Button>
       </div>
 
       <div className="flex flex-wrap items-center gap-4 gap-y-2 text-sm">
@@ -763,6 +903,8 @@ function buildAnnotationsForFile(
           file: activeComment.file,
           line: activeComment.line,
           side: activeComment.side,
+          startLine: activeComment.startLine,
+          startSide: activeComment.startSide,
         },
       },
     })
@@ -801,6 +943,7 @@ function areAnnotationsEqual(
     if (xm?.comment?.id !== ym?.comment?.id) return false
     if (xm?.comment?.body !== ym?.comment?.body) return false
     if (Boolean(xm?.form) !== Boolean(ym?.form)) return false
+    if (xm?.form?.startLine !== ym?.form?.startLine) return false
     if (xm?.reply?.parentId !== ym?.reply?.parentId) return false
   }
   return true
