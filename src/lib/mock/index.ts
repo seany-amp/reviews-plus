@@ -3,13 +3,50 @@ import {
   prFiles,
   prComments,
   prReviews,
+  prReviewThreads,
   prDiff,
   stressMetadata,
   stressFiles,
   stressDiff,
 } from './fixtures';
+import type { PRComment } from '@/lib/github/types';
 
 type InvokeArgs = Record<string, unknown>;
+
+// Stateful in dev/browser mode so posted comments (and the optimistic UI path)
+// survive the post-mutation refetch instead of reverting to the static fixture.
+const postedComments: PRComment[] = [];
+
+interface PostCommentBody {
+  body: string;
+  path: string;
+  line: number;
+  side?: string;
+  start_line?: number;
+  start_side?: string;
+  in_reply_to?: number;
+}
+
+function createPostedComment(raw: string | undefined): PRComment {
+  const params = (raw ? JSON.parse(raw) : {}) as PostCommentBody;
+  const comment: PRComment = {
+    id: Date.now(),
+    user: {
+      login: 'octocat',
+      avatar_url: 'https://avatars.githubusercontent.com/u/583231',
+    },
+    body: params.body,
+    path: params.path,
+    line: params.line,
+    start_line: params.start_line ?? null,
+    side: params.side ?? 'RIGHT',
+    start_side: params.start_side,
+    created_at: new Date().toISOString(),
+    ...(params.in_reply_to != null ? { in_reply_to_id: params.in_reply_to } : {}),
+  };
+  postedComments.push(comment);
+  return comment;
+}
 
 function isStressMode(): boolean {
   if (typeof window === 'undefined') return false;
@@ -75,6 +112,15 @@ function resolveGithubFetch(args: InvokeArgs): unknown {
 
   const stress = isStressMode();
   const accept = args.accept as string | undefined;
+  const method = (args.method as string | undefined)?.toUpperCase();
+
+  const isCommentsEndpoint = /\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/comments$/.test(endpoint);
+  if (isCommentsEndpoint && method === 'POST') {
+    return createPostedComment(args.body as string | undefined);
+  }
+  if (isCommentsEndpoint) {
+    return [...(prComments as PRComment[]), ...postedComments];
+  }
 
   if (accept && accept.includes('diff')) {
     // Mirror GitHub's real behavior on huge PRs: the unified-diff endpoint
@@ -122,6 +168,12 @@ export async function mockInvoke<T = unknown>(
   switch (command) {
     case 'github_fetch':
       return resolveGithubFetch(args ?? {}) as T;
+
+    // GraphQL hits the /graphql path, not a /repos path, so the REST endpoint
+    // patterns never apply — branch on the command name and return the raw
+    // JSON string the Rust command would have produced.
+    case 'github_graphql':
+      return JSON.stringify(prReviewThreads) as T;
 
     case 'github_fetch_diff':
       return prDiff as T;

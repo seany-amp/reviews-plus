@@ -1,0 +1,43 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "reviewThreads": {
+          "nodes": [
+            {
+              "isResolved": true,
+              "isOutdated": false,
+              "comments": {
+                "nodes": [
+                  { "databaseId": 3287600042 },
+                  { "databaseId": 3287822155 }
+                ]
+              }
+            },
+            {
+              "isResolved": false,
+              "isOutdated": false,
+              "comments": {
+                "nodes": [
+                  { "databaseId": 3288222364 },
+                  { "databaseId": 3288878872 },
+                  { "databaseId": 3289231459 }
+                ]
+              }
+            },
+            {
+              "isResolved": false,
+              "isOutdated": true,
+              "comments": {
+                "nodes": [
+                  { "databaseId": 3289239624 },
+                  { "databaseId": 3291677416 }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
