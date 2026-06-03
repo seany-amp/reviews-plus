@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useEffect } from 'react'
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight, Check, RotateCcw, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
 import type { PRComment } from '@/lib/github/types'
 
 type GoToComment = (path: string, line: number, side: 'additions' | 'deletions') => void
@@ -9,8 +9,14 @@ interface CommentsPanelProps {
   commentsByPath: Map<string, PRComment[]>
   resolvedById: Map<number, boolean>
   outdatedById: Map<number, boolean>
+  threadIdByRootId: Map<number, string>
+  currentUserLogin: string | undefined
   onGoToComment: GoToComment
   onSubmitReply: (rootId: number, path: string, line: number, side: 'additions' | 'deletions', body: string) => Promise<void> | void
+  onResolveThread: (threadId: string) => Promise<void> | void
+  onUnresolveThread: (threadId: string) => Promise<void> | void
+  onEditComment: (commentId: number, body: string) => Promise<void> | void
+  onDeleteComment: (commentId: number) => Promise<void> | void
   isSubmitting: boolean
 }
 
@@ -19,6 +25,7 @@ interface Thread {
   replies: PRComment[]
   resolved: boolean
   outdated: boolean
+  threadId: string | undefined
 }
 
 function formatRelativeTime(dateStr: string): string {
@@ -39,6 +46,7 @@ function buildThreads(
   comments: PRComment[],
   resolvedById: Map<number, boolean>,
   outdatedById: Map<number, boolean>,
+  threadIdByRootId: Map<number, string>,
 ): Thread[] {
   const roots = comments.filter((c) => !c.in_reply_to_id)
   const repliesByRoot = new Map<number, PRComment[]>()
@@ -53,6 +61,7 @@ function buildThreads(
     replies: repliesByRoot.get(root.id) ?? [],
     resolved: resolvedById.get(root.id) ?? false,
     outdated: outdatedById.get(root.id) ?? false,
+    threadId: threadIdByRootId.get(root.id),
   }))
 }
 
@@ -61,8 +70,14 @@ export function CommentsPanel({
   commentsByPath,
   resolvedById,
   outdatedById,
+  threadIdByRootId,
+  currentUserLogin,
   onGoToComment,
   onSubmitReply,
+  onResolveThread,
+  onUnresolveThread,
+  onEditComment,
+  onDeleteComment,
   isSubmitting,
 }: CommentsPanelProps) {
   const [expandedThreadIds, setExpandedThreadIds] = useState<Set<number>>(new Set())
@@ -76,7 +91,6 @@ export function CommentsPanel({
         ordered.push(path)
       }
     }
-    // Comments on files not present in the diff (e.g. fully outdated) still list.
     for (const path of commentsByPath.keys()) {
       if (!seen.has(path)) {
         seen.add(path)
@@ -85,9 +99,9 @@ export function CommentsPanel({
     }
     return ordered.map((path) => ({
       path,
-      threads: buildThreads(commentsByPath.get(path) ?? [], resolvedById, outdatedById),
+      threads: buildThreads(commentsByPath.get(path) ?? [], resolvedById, outdatedById, threadIdByRootId),
     }))
-  }, [fileOrder, commentsByPath, resolvedById, outdatedById])
+  }, [fileOrder, commentsByPath, resolvedById, outdatedById, threadIdByRootId])
 
   const toggleThread = (id: number) => {
     setExpandedThreadIds((prev) => {
@@ -122,9 +136,14 @@ export function CommentsPanel({
                   key={thread.root.id}
                   thread={thread}
                   expanded={expandedThreadIds.has(thread.root.id)}
+                  currentUserLogin={currentUserLogin}
                   onToggle={() => toggleThread(thread.root.id)}
                   onGoToComment={onGoToComment}
                   onSubmitReply={onSubmitReply}
+                  onResolveThread={onResolveThread}
+                  onUnresolveThread={onUnresolveThread}
+                  onEditComment={onEditComment}
+                  onDeleteComment={onDeleteComment}
                   isSubmitting={isSubmitting}
                 />
               ))}
@@ -139,19 +158,30 @@ export function CommentsPanel({
 function ThreadRow({
   thread,
   expanded,
+  currentUserLogin,
   onToggle,
   onGoToComment,
   onSubmitReply,
+  onResolveThread,
+  onUnresolveThread,
+  onEditComment,
+  onDeleteComment,
   isSubmitting,
 }: {
   thread: Thread
   expanded: boolean
+  currentUserLogin: string | undefined
   onToggle: () => void
   onGoToComment: GoToComment
   onSubmitReply: CommentsPanelProps['onSubmitReply']
+  onResolveThread: CommentsPanelProps['onResolveThread']
+  onUnresolveThread: CommentsPanelProps['onUnresolveThread']
+  onEditComment: CommentsPanelProps['onEditComment']
+  onDeleteComment: CommentsPanelProps['onDeleteComment']
   isSubmitting: boolean
 }) {
-  const { root, replies, resolved, outdated } = thread
+  const { root, replies, resolved, outdated, threadId } = thread
+  const [resolvePending, setResolvePending] = useState(false)
   const collapsedByDefault = resolved && !expanded
   const isMultiLine = root.start_line != null && root.line != null && root.start_line !== root.line
   const side = root.side === 'LEFT' ? ('deletions' as const) : ('additions' as const)
@@ -161,11 +191,24 @@ function ThreadRow({
     if (canNavigate) onGoToComment(root.path, root.line!, side)
   }
 
-  // Single-click jumps the diff to this comment's line (when navigable) and
-  // expands the thread. Clicking an already-expanded thread just collapses it.
   const handleRowActivate = () => {
     if (!expanded && canNavigate) goToLocation()
     onToggle()
+  }
+
+  const handleToggleResolved = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!threadId || resolvePending) return
+    setResolvePending(true)
+    try {
+      if (resolved) {
+        await onUnresolveThread(threadId)
+      } else {
+        await onResolveThread(threadId)
+      }
+    } finally {
+      setResolvePending(false)
+    }
   }
 
   return (
@@ -220,25 +263,53 @@ function ThreadRow({
             </div>
           )}
         </div>
-        {canNavigate && (
-          <button
-            className="opacity-0 group-hover:opacity-100 flex-shrink-0 p-1 rounded hover:bg-muted text-muted-foreground"
-            title="Go to location in diff"
-            onClick={(e) => {
-              e.stopPropagation()
-              goToLocation()
-            }}
-          >
-            <ArrowRight className="size-3.5" />
-          </button>
-        )}
+        <div className="flex-shrink-0 flex items-center gap-0.5">
+          {threadId && (
+            <button
+              className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-muted text-muted-foreground disabled:opacity-40"
+              title={resolved ? 'Unresolve thread' : 'Resolve thread'}
+              disabled={resolvePending}
+              onClick={handleToggleResolved}
+            >
+              {resolved ? (
+                <RotateCcw className="size-3.5" />
+              ) : (
+                <Check className="size-3.5" />
+              )}
+            </button>
+          )}
+          {canNavigate && (
+            <button
+              className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-muted text-muted-foreground"
+              title="Go to location in diff"
+              onClick={(e) => {
+                e.stopPropagation()
+                goToLocation()
+              }}
+            >
+              <ArrowRight className="size-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {expanded && (
         <div className="px-3 pb-3 space-y-2">
-          <ThreadComment comment={root} />
+          <ThreadComment
+            comment={root}
+            isOwnComment={currentUserLogin != null && root.user.login === currentUserLogin}
+            onEdit={onEditComment}
+            onDelete={onDeleteComment}
+          />
           {replies.map((reply) => (
-            <ThreadComment key={reply.id} comment={reply} isReply />
+            <ThreadComment
+              key={reply.id}
+              comment={reply}
+              isReply
+              isOwnComment={currentUserLogin != null && reply.user.login === currentUserLogin}
+              onEdit={onEditComment}
+              onDelete={onDeleteComment}
+            />
           ))}
           {root.line != null && (
             <ReplyComposer
@@ -251,10 +322,37 @@ function ThreadRow({
   )
 }
 
-function ThreadComment({ comment, isReply }: { comment: PRComment; isReply?: boolean }) {
+function ThreadComment({
+  comment,
+  isReply,
+  isOwnComment,
+  onEdit,
+  onDelete,
+}: {
+  comment: PRComment
+  isReply?: boolean
+  isOwnComment: boolean
+  onEdit: (commentId: number, body: string) => Promise<void> | void
+  onDelete: (commentId: number) => Promise<void> | void
+}) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [editMode, setEditMode] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleOutsideClick)
+    return () => document.removeEventListener('mousedown', handleOutsideClick)
+  }, [menuOpen])
+
   return (
     <div className={isReply ? 'pl-3 border-l-2 border-muted' : undefined}>
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 group/comment">
         <img
           src={comment.user.avatar_url}
           alt={comment.user.login}
@@ -264,8 +362,125 @@ function ThreadComment({ comment, isReply }: { comment: PRComment; isReply?: boo
         <span className="text-xs text-muted-foreground">
           {formatRelativeTime(comment.created_at)}
         </span>
+        {isOwnComment && !editMode && (
+          <div className="relative ml-auto" ref={menuRef}>
+            <button
+              className="opacity-0 group-hover/comment:opacity-100 p-0.5 rounded hover:bg-muted text-muted-foreground"
+              title="More options"
+              onClick={() => setMenuOpen((prev) => !prev)}
+            >
+              <MoreHorizontal className="size-3.5" />
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 top-5 z-10 bg-popover border rounded shadow-md py-1 min-w-[120px]">
+                <button
+                  className="flex items-center gap-2 w-full px-3 py-1.5 text-xs hover:bg-muted text-left"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    setEditMode(true)
+                  }}
+                >
+                  <Pencil className="size-3" />
+                  Edit
+                </button>
+                <button
+                  className="flex items-center gap-2 w-full px-3 py-1.5 text-xs hover:bg-muted text-left text-destructive"
+                  onClick={async () => {
+                    setMenuOpen(false)
+                    await onDelete(comment.id)
+                  }}
+                >
+                  <Trash2 className="size-3" />
+                  Delete
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
-      <div className="text-xs mt-0.5 whitespace-pre-wrap break-words">{comment.body}</div>
+      {editMode ? (
+        <InlineEditor
+          initialBody={comment.body}
+          onSave={async (body) => {
+            await onEdit(comment.id, body)
+            setEditMode(false)
+          }}
+          onCancel={() => setEditMode(false)}
+        />
+      ) : (
+        <div className="text-xs mt-0.5 whitespace-pre-wrap break-words">{comment.body}</div>
+      )}
+    </div>
+  )
+}
+
+function InlineEditor({
+  initialBody,
+  onSave,
+  onCancel,
+}: {
+  initialBody: string
+  onSave: (body: string) => Promise<void>
+  onCancel: () => void
+}) {
+  const [body, setBody] = useState(initialBody)
+  const [saving, setSaving] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    textareaRef.current?.focus({ preventScroll: true })
+    textareaRef.current?.select()
+  }, [])
+
+  const save = async () => {
+    const value = body.trim()
+    if (!value || saving) return
+    setSaving(true)
+    try {
+      await onSave(value)
+    } catch {
+      // Keep draft on error
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="space-y-1 mt-1">
+      <textarea
+        ref={textareaRef}
+        className="w-full text-xs border rounded p-1.5 bg-background resize-y focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+        rows={3}
+        value={body}
+        disabled={saving}
+        onChange={(e) => setBody(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault()
+            void save()
+          }
+          if (e.key === 'Escape') {
+            e.preventDefault()
+            onCancel()
+          }
+        }}
+      />
+      <div className="flex items-center justify-end gap-1.5">
+        <button
+          className="text-xs px-2 py-0.5 rounded border hover:bg-muted disabled:opacity-50"
+          disabled={saving}
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+        <button
+          className="text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground disabled:opacity-50"
+          disabled={saving || !body.trim() || body.trim() === initialBody.trim()}
+          onClick={() => void save()}
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
     </div>
   )
 }
@@ -280,8 +495,6 @@ function ReplyComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    // Focus for quick replies, but don't yank the panel's scroll position
-    // (threads are opened by clicking a comment, which also scrolls the diff).
     textareaRef.current?.focus({ preventScroll: true })
   }, [])
 
@@ -291,7 +504,7 @@ function ReplyComposer({
     setPosting(true)
     try {
       await onSubmit(value)
-      setBody('') // clear only after a successful post
+      setBody('')
     } catch {
       // Keep the draft so the user can retry without retyping.
     } finally {

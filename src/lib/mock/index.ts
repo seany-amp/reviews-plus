@@ -9,13 +9,19 @@ import {
   stressFiles,
   stressDiff,
 } from './fixtures';
-import type { PRComment } from '@/lib/github/types';
+import type { PRComment, PRReviewThread } from '@/lib/github/types';
 
 type InvokeArgs = Record<string, unknown>;
 
 // Stateful in dev/browser mode so posted comments (and the optimistic UI path)
 // survive the post-mutation refetch instead of reverting to the static fixture.
 const postedComments: PRComment[] = [];
+
+// Mutable copy of review threads so resolve/unresolve mutations flip state.
+let mutableThreads: PRReviewThread[] = (
+  (prReviewThreads as { data: { repository: { pullRequest: { reviewThreads: { nodes: PRReviewThread[] } } } } })
+    .data.repository.pullRequest?.reviewThreads.nodes ?? []
+).map((t) => ({ ...t }));
 
 interface PostCommentBody {
   body: string;
@@ -114,6 +120,30 @@ function resolveGithubFetch(args: InvokeArgs): unknown {
   const accept = args.accept as string | undefined;
   const method = (args.method as string | undefined)?.toUpperCase();
 
+  // Single-comment endpoint: PATCH (edit) or DELETE
+  const singleCommentMatch = endpoint.match(/\/repos\/[^/]+\/[^/]+\/pulls\/comments\/(\d+)$/);
+  if (singleCommentMatch) {
+    const commentId = Number(singleCommentMatch[1]);
+    if (method === 'DELETE') {
+      const idx = postedComments.findIndex((c) => c.id === commentId);
+      if (idx !== -1) postedComments.splice(idx, 1);
+      // Fixture comments: silently tolerate (cannot mutate the JSON import)
+      return null;
+    }
+    if (method === 'PATCH') {
+      const patchBody = (args.body ? JSON.parse(args.body as string) : {}) as { body?: string };
+      const posted = postedComments.find((c) => c.id === commentId);
+      if (posted) {
+        posted.body = patchBody.body ?? posted.body;
+        return { ...posted };
+      }
+      // Fixture comment: return a synthetic updated copy
+      const fixture = (prComments as PRComment[]).find((c) => c.id === commentId);
+      if (fixture) return { ...fixture, body: patchBody.body ?? fixture.body };
+      throw new Error(`[mockInvoke] Comment ${commentId} not found`);
+    }
+  }
+
   const isCommentsEndpoint = /\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/comments$/.test(endpoint);
   if (isCommentsEndpoint && method === 'POST') {
     return createPostedComment(args.body as string | undefined);
@@ -172,8 +202,43 @@ export async function mockInvoke<T = unknown>(
     // GraphQL hits the /graphql path, not a /repos path, so the REST endpoint
     // patterns never apply — branch on the command name and return the raw
     // JSON string the Rust command would have produced.
-    case 'github_graphql':
+    case 'github_graphql': {
+      const gqlBody = args?.body as string | undefined;
+      if (gqlBody) {
+        const parsed = JSON.parse(gqlBody) as { query?: string; variables?: Record<string, unknown> };
+        const query = parsed.query ?? '';
+        const variables = parsed.variables ?? {};
+
+        if (query.includes('resolveReviewThread')) {
+          const threadId = variables.threadId as string;
+          const thread = mutableThreads.find((t) => t.id === threadId);
+          if (thread) thread.isResolved = true;
+          return JSON.stringify({ data: { resolveReviewThread: { thread: { id: threadId, isResolved: true } } } }) as T;
+        }
+
+        if (query.includes('unresolveReviewThread')) {
+          const threadId = variables.threadId as string;
+          const thread = mutableThreads.find((t) => t.id === threadId);
+          if (thread) thread.isResolved = false;
+          return JSON.stringify({ data: { unresolveReviewThread: { thread: { id: threadId, isResolved: false } } } }) as T;
+        }
+
+        // REVIEW_THREADS_QUERY — return current mutable state
+        if (query.includes('reviewThreads')) {
+          const response = {
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewThreads: { nodes: mutableThreads },
+                },
+              },
+            },
+          };
+          return JSON.stringify(response) as T;
+        }
+      }
       return JSON.stringify(prReviewThreads) as T;
+    }
 
     case 'github_fetch_diff':
       return prDiff as T;

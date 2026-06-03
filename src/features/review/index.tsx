@@ -7,6 +7,11 @@ import {
   usePRComments,
   usePRReviewThreads,
   usePostComment,
+  useResolveThread,
+  useUnresolveThread,
+  useCurrentUser,
+  useEditComment,
+  useDeleteComment,
 } from '@/lib/github'
 import { parsePatchFiles, preloadHighlighter } from '@pierre/diffs'
 import { CodeView, WorkerPoolContextProvider } from '@pierre/diffs/react'
@@ -177,6 +182,11 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   const comments = usePRComments(owner, repo, number)
   const reviewThreads = usePRReviewThreads(owner, repo, number)
   const postComment = usePostComment(owner, repo, number)
+  const resolveThread = useResolveThread(owner, repo, number)
+  const unresolveThread = useUnresolveThread(owner, repo, number)
+  const currentUser = useCurrentUser()
+  const editComment = useEditComment(owner, repo, number)
+  const deleteComment = useDeleteComment(owner, repo, number)
 
   const [activeComment, setActiveComment] = useState<ActiveComment | null>(null)
   const [activeReply, setActiveReply] = useState<{
@@ -311,14 +321,19 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   const threadStateById = useMemo(() => {
     const resolved = new Map<number, boolean>()
     const outdated = new Map<number, boolean>()
+    const threadIdByRootId = new Map<number, string>()
     for (const thread of reviewThreads.data ?? []) {
+      const firstId = thread.comments.nodes[0]?.databaseId
       for (const node of thread.comments.nodes) {
         if (node.databaseId == null) continue
         resolved.set(node.databaseId, thread.isResolved)
         outdated.set(node.databaseId, thread.isOutdated)
       }
+      if (firstId != null && thread.id) {
+        threadIdByRootId.set(firstId, thread.id)
+      }
     }
-    return { resolved, outdated }
+    return { resolved, outdated, threadIdByRootId }
   }, [reviewThreads.data])
 
   const fileNameOrder = useMemo(() => parsedFiles.map((f) => f.name), [parsedFiles])
@@ -495,11 +510,62 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
         toast.success('Reply posted')
       } catch (err) {
         toast.error(`Failed to post reply: ${(err as Error).message}`)
-        // Rethrow so the composer keeps the user's draft text.
         throw err
       }
     },
     [metadata.data, postComment],
+  )
+
+  const handleResolveThread = useCallback(
+    async (threadId: string) => {
+      try {
+        await resolveThread.mutateAsync(threadId)
+        toast.success('Thread resolved')
+      } catch (err) {
+        toast.error(`Failed to resolve thread: ${(err as Error).message}`)
+        throw err
+      }
+    },
+    [resolveThread],
+  )
+
+  const handleUnresolveThread = useCallback(
+    async (threadId: string) => {
+      try {
+        await unresolveThread.mutateAsync(threadId)
+        toast.success('Thread reopened')
+      } catch (err) {
+        toast.error(`Failed to unresolve thread: ${(err as Error).message}`)
+        throw err
+      }
+    },
+    [unresolveThread],
+  )
+
+  const handleEditComment = useCallback(
+    async (commentId: number, body: string) => {
+      try {
+        await editComment.mutateAsync({ commentId, body })
+        toast.success('Comment updated')
+      } catch (err) {
+        toast.error(`Failed to update comment: ${(err as Error).message}`)
+        throw err
+      }
+    },
+    [editComment],
+  )
+
+  const handleDeleteComment = useCallback(
+    async (commentId: number) => {
+      try {
+        await deleteComment.mutateAsync(commentId)
+        toast.success('Comment deleted')
+      } catch (err) {
+        toast.error(`Failed to delete comment: ${(err as Error).message}`)
+        throw err
+      }
+    },
+    [deleteComment],
   )
 
   const scrollToItem = useCallback((id: string) => {
@@ -849,8 +915,14 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
               commentsByPath={commentsByPath}
               resolvedById={threadStateById.resolved}
               outdatedById={threadStateById.outdated}
+              threadIdByRootId={threadStateById.threadIdByRootId}
+              currentUserLogin={currentUser.data?.login}
               onGoToComment={scrollToComment}
               onSubmitReply={handlePanelReply}
+              onResolveThread={handleResolveThread}
+              onUnresolveThread={handleUnresolveThread}
+              onEditComment={handleEditComment}
+              onDeleteComment={handleDeleteComment}
               isSubmitting={postComment.isPending}
             />
           )}

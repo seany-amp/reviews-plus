@@ -7,6 +7,7 @@ import type {
   PRReview,
   PRReviewThread,
   SearchIssueItem,
+  CurrentUser,
 } from './types'
 
 async function githubFetch<T>(
@@ -144,6 +145,7 @@ const REVIEW_THREADS_QUERY = `
       pullRequest(number: $number) {
         reviewThreads(first: 100) {
           nodes {
+            id
             isResolved
             isOutdated
             comments(first: 100) {
@@ -237,6 +239,116 @@ export function usePostComment(
       }
       queryClient.setQueryData<PRComment[]>(commentsKey, (old) => [...(old ?? []), optimistic])
       return { previous, tempId }
+    },
+    onError: (_err, _params, context) => {
+      if (context?.previous !== undefined) {
+        queryClient.setQueryData(commentsKey, context.previous)
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: commentsKey })
+    },
+  })
+}
+
+// ---- Thread resolve/unresolve (Task 1) ----
+
+const RESOLVE_THREAD_MUTATION = `
+  mutation ($threadId: ID!) {
+    resolveReviewThread(input: { threadId: $threadId }) {
+      thread { id isResolved }
+    }
+  }
+`
+
+const UNRESOLVE_THREAD_MUTATION = `
+  mutation ($threadId: ID!) {
+    unresolveReviewThread(input: { threadId: $threadId }) {
+      thread { id isResolved }
+    }
+  }
+`
+
+export function useResolveThread(owner: string, repo: string, number: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (threadId: string) =>
+      githubGraphQL<unknown>(RESOLVE_THREAD_MUTATION, { threadId }),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['pr', owner, repo, number, 'threads'] })
+      queryClient.invalidateQueries({ queryKey: ['pr', owner, repo, number, 'comments'] })
+    },
+  })
+}
+
+export function useUnresolveThread(owner: string, repo: string, number: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (threadId: string) =>
+      githubGraphQL<unknown>(UNRESOLVE_THREAD_MUTATION, { threadId }),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['pr', owner, repo, number, 'threads'] })
+      queryClient.invalidateQueries({ queryKey: ['pr', owner, repo, number, 'comments'] })
+    },
+  })
+}
+
+// ---- Current authenticated user (Task 2) ----
+
+export function useCurrentUser() {
+  return useQuery({
+    queryKey: ['current-user'],
+    queryFn: () => githubFetch<CurrentUser>('/user'),
+    staleTime: 5 * 60_000,
+  })
+}
+
+// ---- Edit / delete own comments (Task 2) ----
+
+export function useEditComment(owner: string, repo: string, number: number) {
+  const queryClient = useQueryClient()
+  const commentsKey = ['pr', owner, repo, number, 'comments'] as const
+  return useMutation({
+    mutationFn: ({ commentId, body }: { commentId: number; body: string }) =>
+      githubFetch<PRComment>(
+        `/repos/${owner}/${repo}/pulls/comments/${commentId}`,
+        { method: 'PATCH', body: JSON.stringify({ body }) },
+      ),
+    onMutate: async ({ commentId, body }): Promise<{ previous: PRComment[] | undefined }> => {
+      await queryClient.cancelQueries({ queryKey: commentsKey })
+      const previous = queryClient.getQueryData<PRComment[]>(commentsKey)
+      queryClient.setQueryData<PRComment[]>(commentsKey, (old) =>
+        old?.map((c) => (c.id === commentId ? { ...c, body } : c)) ?? [],
+      )
+      return { previous }
+    },
+    onError: (_err, _params, context) => {
+      if (context?.previous !== undefined) {
+        queryClient.setQueryData(commentsKey, context.previous)
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: commentsKey })
+    },
+  })
+}
+
+export function useDeleteComment(owner: string, repo: string, number: number) {
+  const queryClient = useQueryClient()
+  const commentsKey = ['pr', owner, repo, number, 'comments'] as const
+  return useMutation({
+    mutationFn: (commentId: number) =>
+      githubFetch<void>(
+        `/repos/${owner}/${repo}/pulls/comments/${commentId}`,
+        { method: 'DELETE' },
+      ),
+    onMutate: async (commentId): Promise<{ previous: PRComment[] | undefined }> => {
+      await queryClient.cancelQueries({ queryKey: commentsKey })
+      const previous = queryClient.getQueryData<PRComment[]>(commentsKey)
+      queryClient.setQueryData<PRComment[]>(commentsKey, (old) =>
+        old?.filter((c) => c.id !== commentId) ?? [],
+      )
+      return { previous }
     },
     onError: (_err, _params, context) => {
       if (context?.previous !== undefined) {

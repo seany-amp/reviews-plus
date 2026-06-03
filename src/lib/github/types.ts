@@ -46,9 +46,17 @@ export interface PRReview {
 }
 
 export interface PRReviewThread {
+  id: string
   isResolved: boolean
   isOutdated: boolean
   comments: { nodes: Array<{ databaseId: number | null }> }
+}
+
+export interface CurrentUser {
+  login: string
+  id: number
+  avatar_url: string
+  name: string | null
 }
 
 export interface SearchIssueItem {
