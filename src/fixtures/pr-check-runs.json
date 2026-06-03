@@ -1,0 +1,45 @@
+{
+  "total_count": 5,
+  "check_runs": [
+    {
+      "id": 1001,
+      "name": "ci / build",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/denoland/deno/actions/runs/1001",
+      "app": { "name": "GitHub Actions" }
+    },
+    {
+      "id": 1002,
+      "name": "ci / test (linux)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/denoland/deno/actions/runs/1002",
+      "app": { "name": "GitHub Actions" }
+    },
+    {
+      "id": 1003,
+      "name": "ci / test (windows)",
+      "status": "in_progress",
+      "conclusion": null,
+      "html_url": "https://github.com/denoland/deno/actions/runs/1003",
+      "app": { "name": "GitHub Actions" }
+    },
+    {
+      "id": 1004,
+      "name": "ci / lint",
+      "status": "completed",
+      "conclusion": "failure",
+      "html_url": "https://github.com/denoland/deno/actions/runs/1004",
+      "app": { "name": "GitHub Actions" }
+    },
+    {
+      "id": 1005,
+      "name": "ci / typecheck",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/denoland/deno/actions/runs/1005",
+      "app": { "name": "GitHub Actions" }
+    }
+  ]
+}

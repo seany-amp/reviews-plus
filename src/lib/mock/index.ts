@@ -5,17 +5,48 @@ import {
   prReviews,
   prReviewThreads,
   prDiff,
+  prCheckRuns,
+  prCommitStatus,
   stressMetadata,
   stressFiles,
   stressDiff,
 } from './fixtures';
-import type { PRComment } from '@/lib/github/types';
+import type { PRComment, PRReview } from '@/lib/github/types';
 
 type InvokeArgs = Record<string, unknown>;
 
 // Stateful in dev/browser mode so posted comments (and the optimistic UI path)
 // survive the post-mutation refetch instead of reverting to the static fixture.
 const postedComments: PRComment[] = [];
+
+// Stateful reviews list — seeded from fixture, extended by POSTs.
+const liveReviews: PRReview[] = [...(prReviews as PRReview[])];
+
+interface PostReviewBody {
+  event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+  body: string;
+}
+
+function createPostedReview(raw: string | undefined): PRReview {
+  const params = (raw ? JSON.parse(raw) : {}) as PostReviewBody;
+  const stateMap: Record<string, string> = {
+    APPROVE: 'APPROVED',
+    REQUEST_CHANGES: 'CHANGES_REQUESTED',
+    COMMENT: 'COMMENTED',
+  };
+  const review: PRReview = {
+    id: Date.now(),
+    user: {
+      login: 'octocat',
+      avatar_url: 'https://avatars.githubusercontent.com/u/583231',
+    },
+    state: stateMap[params.event] ?? 'COMMENTED',
+    body: params.body ?? null,
+    submitted_at: new Date().toISOString(),
+  };
+  liveReviews.push(review);
+  return review;
+}
 
 interface PostCommentBody {
   body: string;
@@ -99,8 +130,6 @@ const ENDPOINT_PATTERNS: Array<{
   { pattern: /^\/user$/, fixture: userFixture },
   { pattern: /\/search\/issues/, fixture: searchIssuesFixture },
   { pattern: /\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/files$/, fixture: prFiles },
-  { pattern: /\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/comments$/, fixture: prComments },
-  { pattern: /\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/reviews$/, fixture: prReviews },
   { pattern: /\/repos\/[^/]+\/[^/]+\/pulls\/\d+$/, fixture: prMetadata },
 ];
 
@@ -120,6 +149,22 @@ function resolveGithubFetch(args: InvokeArgs): unknown {
   }
   if (isCommentsEndpoint) {
     return [...(prComments as PRComment[]), ...postedComments];
+  }
+
+  const isReviewsEndpoint = /\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/reviews$/.test(endpoint);
+  if (isReviewsEndpoint && method === 'POST') {
+    return createPostedReview(args.body as string | undefined);
+  }
+  if (isReviewsEndpoint) {
+    return liveReviews;
+  }
+
+  if (/\/repos\/[^/]+\/[^/]+\/commits\/[^/]+\/check-runs$/.test(endpoint)) {
+    return prCheckRuns;
+  }
+
+  if (/\/repos\/[^/]+\/[^/]+\/commits\/[^/]+\/status$/.test(endpoint)) {
+    return prCommitStatus;
   }
 
   if (accept && accept.includes('diff')) {

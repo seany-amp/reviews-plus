@@ -4,6 +4,8 @@ import prComments from '../../fixtures/pr-comments.json';
 import prReviews from '../../fixtures/pr-reviews.json';
 import prReviewThreads from '../../fixtures/pr-review-threads.json';
 import prDiff from '../../fixtures/pr-diff.patch?raw';
+import prCheckRuns from '../../fixtures/pr-check-runs.json';
+import prCommitStatus from '../../fixtures/pr-commit-status.json';
 
 // Large real-world PR (kubernetes/kubernetes#139355: 155 files, +26k/-5.5k).
 // Used to stress-test the worker pool + virtualization. Toggle via
@@ -19,6 +21,8 @@ export {
   prReviews,
   prReviewThreads,
   prDiff,
+  prCheckRuns,
+  prCommitStatus,
   stressMetadata,
   stressFiles,
   stressDiff,

@@ -51,6 +51,32 @@ export interface PRReviewThread {
   comments: { nodes: Array<{ databaseId: number | null }> }
 }
 
+export interface CheckRun {
+  id: number
+  name: string
+  status: string // "queued" | "in_progress" | "completed"
+  conclusion: string | null // "success" | "failure" | "neutral" | "cancelled" | "skipped" | "timed_out" | "action_required"
+  html_url: string
+  app: { name: string } | null
+}
+
+export interface CheckRunsResponse {
+  total_count: number
+  check_runs: CheckRun[]
+}
+
+export interface CommitStatus {
+  state: string // "error" | "failure" | "pending" | "success"
+  statuses: Array<{
+    id: number
+    state: string
+    description: string | null
+    target_url: string | null
+    context: string
+  }>
+  total_count: number
+}
+
 export interface SearchIssueItem {
   number: number
   title: string
