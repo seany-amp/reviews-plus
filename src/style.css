@@ -135,6 +135,35 @@
   }
 }
 
+/*
+ * Line-number click affordance
+ *
+ * @pierre/diffs renders line-number cells ([data-column-number]) inside a
+ * shadow DOM, so external selectors cannot reach them directly.
+ *
+ * cursor: pointer is already injected by the library's own shadow-DOM CSS
+ * whenever `onLineNumberClick` or `enableLineSelection` is set on CodeView
+ * (both are true in this codebase — see src/features/review/index.tsx).
+ *
+ * The hover background highlight is driven by the library's `lineHoverHighlight`
+ * option + `[data-hovered]` attribute.  CSS custom properties DO inherit across
+ * the shadow-DOM boundary, so we prime --diffs-bg-hover-override here to give
+ * the hover a GitHub-flavoured blue tint once lineHoverHighlight is enabled.
+ *
+ * REQUIRED index.tsx change (see subtask report):
+ *   Add  lineHoverHighlight: "number"  to DIFF_OPTIONS so the library applies
+ *   [data-hovered] on the number cell and activates the hover background.
+ */
+diffs-container {
+  /* Light mode: faint blue tint matching GitHub's #0969da line-number hover */
+  --diffs-bg-hover-override: oklch(0.55 0.18 250);
+}
+
+.dark diffs-container {
+  /* Dark mode: slightly brighter blue so it reads on dark backgrounds */
+  --diffs-bg-hover-override: oklch(0.65 0.18 250);
+}
+
 /* Diff gutter add-comment button */
 .diffs-gutter-add-comment {
   display: flex;

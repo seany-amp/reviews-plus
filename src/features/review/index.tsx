@@ -19,6 +19,7 @@ import type {
 import type {
   FileDiffMetadata,
   CodeViewOptions,
+  OnDiffLineClickProps,
   GetHoveredLineResult,
   ThemesType,
   DiffLineAnnotation,
@@ -118,6 +119,7 @@ const DIFF_OPTIONS: CodeViewOptions<AnnotationPayload> = {
   overflow: 'scroll',
   stickyHeaders: true,
   enableLineSelection: true,
+  lineHoverHighlight: 'number',
   layout: { gap: 16, paddingTop: 0, paddingBottom: 0 },
 }
 
@@ -200,15 +202,6 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     mql.addEventListener('change', onChange)
     return () => mql.removeEventListener('change', onChange)
   }, [])
-
-  const diffOptions = useMemo<CodeViewOptions<AnnotationPayload>>(
-    () => ({
-      ...DIFF_OPTIONS,
-      themeType,
-      diffStyle: isNarrow ? 'unified' : 'split',
-    }),
-    [themeType, isNarrow],
-  )
 
   const [currentFileIndex, setCurrentFileIndex] = useState(0)
   const [filePaletteOpen, setFilePaletteOpen] = useState(false)
@@ -385,6 +378,18 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
       }
     },
     [],
+  )
+
+  const diffOptions = useMemo<CodeViewOptions<AnnotationPayload>>(
+    () => ({
+      ...DIFF_OPTIONS,
+      themeType,
+      diffStyle: isNarrow ? 'unified' : 'split',
+      onLineNumberClick: ((props: OnDiffLineClickProps, context: { item: { id: string } }) =>
+        handleStartComment(context.item.id, props.lineNumber, props.annotationSide)
+      ) as unknown as CodeViewOptions<AnnotationPayload>['onLineNumberClick'],
+    }),
+    [themeType, isNarrow, handleStartComment],
   )
 
   const handleStartReply = useCallback(
