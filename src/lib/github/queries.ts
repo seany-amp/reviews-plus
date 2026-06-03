@@ -8,6 +8,9 @@ import type {
   PRReviewThread,
   SearchIssueItem,
   CurrentUser,
+  CheckRun,
+  CheckRunsResponse,
+  CommitStatus,
 } from './types'
 
 async function githubFetch<T>(
@@ -192,6 +195,87 @@ export function useMyPRs() {
       ),
     staleTime: 60_000,
     refetchInterval: 60_000,
+  })
+}
+
+export interface SubmitReviewParams {
+  event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'
+  body: string
+}
+
+export function useSubmitReview(owner: string, repo: string, number: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (params: SubmitReviewParams) =>
+      githubFetch<PRReview>(
+        `/repos/${owner}/${repo}/pulls/${number}/reviews`,
+        {
+          method: 'POST',
+          body: JSON.stringify(params),
+        },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pr', owner, repo, number, 'reviews'] })
+      queryClient.invalidateQueries({ queryKey: ['pr', owner, repo, number, 'threads'] })
+    },
+  })
+}
+
+export interface MergedCheckRun {
+  id: string
+  name: string
+  status: string
+  conclusion: string | null
+  url: string
+}
+
+function mergeChecks(checkRuns: CheckRun[], combined: CommitStatus): MergedCheckRun[] {
+  const runs: MergedCheckRun[] = checkRuns.map((r) => ({
+    id: `check-${r.id}`,
+    name: r.name,
+    status: r.status,
+    conclusion: r.conclusion,
+    url: r.html_url,
+  }))
+  const statusEntries: MergedCheckRun[] = combined.statuses.map((s) => ({
+    id: `status-${s.id}`,
+    name: s.context,
+    status: 'completed',
+    conclusion: s.state === 'success' ? 'success' : s.state === 'pending' ? null : 'failure',
+    url: s.target_url ?? '',
+  }))
+  return [...runs, ...statusEntries]
+}
+
+export type ChecksAggregate =
+  | 'success'
+  | 'failure'
+  | 'pending'
+  | 'none'
+
+export function aggregateChecks(checks: MergedCheckRun[]): ChecksAggregate {
+  if (checks.length === 0) return 'none'
+  if (checks.some((c) => c.status !== 'completed' || c.conclusion == null)) return 'pending'
+  if (checks.some((c) => c.conclusion === 'failure' || c.conclusion === 'timed_out' || c.conclusion === 'action_required')) return 'failure'
+  return 'success'
+}
+
+export function useChecks(owner: string, repo: string, sha: string) {
+  return useQuery({
+    queryKey: ['commits', owner, repo, sha, 'checks'],
+    queryFn: async () => {
+      const [runsResponse, combined] = await Promise.all([
+        githubFetch<CheckRunsResponse>(
+          `/repos/${owner}/${repo}/commits/${sha}/check-runs`,
+        ),
+        githubFetch<CommitStatus>(
+          `/repos/${owner}/${repo}/commits/${sha}/status`,
+        ),
+      ])
+      return mergeChecks(runsResponse.check_runs, combined)
+    },
+    staleTime: 30_000,
+    enabled: Boolean(sha),
   })
 }
 

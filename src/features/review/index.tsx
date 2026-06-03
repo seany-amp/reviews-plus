@@ -12,7 +12,11 @@ import {
   useCurrentUser,
   useEditComment,
   useDeleteComment,
+  useSubmitReview,
+  useChecks,
+  aggregateChecks,
 } from '@/lib/github'
+import type { MergedCheckRun } from '@/lib/github'
 import { parsePatchFiles, preloadHighlighter } from '@pierre/diffs'
 import { CodeView, WorkerPoolContextProvider } from '@pierre/diffs/react'
 import type {
@@ -44,8 +48,22 @@ import {
 } from '@/lib/diffs/worker-pool'
 import type { PRIdentifier } from '@/lib/github/parse-url'
 import type { PRMetadata, PRReview, PRComment } from '@/lib/github/types'
+import type { SubmitReviewParams } from '@/lib/github/queries'
 import { toast } from 'sonner'
-import { AlertTriangle, MessageSquare, PanelLeft, Settings } from 'lucide-react'
+import {
+  AlertTriangle,
+  MessageSquare,
+  PanelLeft,
+  Settings,
+  ChevronDown,
+  ChevronRight,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  Circle,
+  ExternalLink,
+} from 'lucide-react'
+import { Collapsible, Popover, RadioGroup } from 'radix-ui'
 import { Button } from '@/components/ui/button'
 import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts'
 import { FilePalette } from '@/components/file-palette'
@@ -187,6 +205,9 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   const currentUser = useCurrentUser()
   const editComment = useEditComment(owner, repo, number)
   const deleteComment = useDeleteComment(owner, repo, number)
+  const submitReview = useSubmitReview(owner, repo, number)
+  const headSha = metadata.data?.head.sha ?? ''
+  const checks = useChecks(owner, repo, headSha)
 
   const [activeComment, setActiveComment] = useState<ActiveComment | null>(null)
   const [activeReply, setActiveReply] = useState<{
@@ -876,6 +897,14 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
               onToggleSidebar={toggleSidebar}
               commentsPanelOpen={commentsPanelOpen}
               onToggleCommentsPanel={toggleCommentsPanel}
+              checksData={checks.data}
+              onSubmitReview={(params) =>
+                submitReview.mutate(params, {
+                  onSuccess: () => toast.success('Review submitted'),
+                  onError: (err) => toast.error(`Failed to submit review: ${err.message}`),
+                })
+              }
+              isSubmittingReview={submitReview.isPending}
             />
           )}
           <WorkerPoolContextProvider
@@ -941,6 +970,8 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   )
 }
 
+const DESC_STORAGE_KEY = 'reviews-plus:desc-open'
+
 function PRHeader({
   metadata,
   reviews,
@@ -949,6 +980,9 @@ function PRHeader({
   onToggleSidebar,
   commentsPanelOpen,
   onToggleCommentsPanel,
+  checksData,
+  onSubmitReview,
+  isSubmittingReview,
 }: {
   metadata: PRMetadata
   reviews: PRReview[] | undefined
@@ -957,68 +991,323 @@ function PRHeader({
   onToggleSidebar: () => void
   commentsPanelOpen: boolean
   onToggleCommentsPanel: () => void
+  checksData: MergedCheckRun[] | undefined
+  onSubmitReview: (params: SubmitReviewParams) => void
+  isSubmittingReview: boolean
 }) {
+  const [descOpen, setDescOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(DESC_STORAGE_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
+
+  const handleDescToggle = (open: boolean) => {
+    setDescOpen(open)
+    try {
+      localStorage.setItem(DESC_STORAGE_KEY, open ? 'true' : 'false')
+    } catch {
+      // ignore
+    }
+  }
+
   return (
-    <div className="border rounded-lg p-4 bg-card mx-4 mt-4">
-      <div className="flex items-center gap-3 mb-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-8 flex-shrink-0"
-          onClick={onToggleSidebar}
-          title={sidebarOpen ? 'Hide sidebar (⌘B)' : 'Show sidebar (⌘B)'}
-        >
-          <PanelLeft className="size-4" />
-        </Button>
-        <img
-          src={metadata.user.avatar_url}
-          alt={metadata.user.login}
-          className="w-8 h-8 rounded-full"
-        />
-        <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-semibold truncate">{metadata.title}</h1>
-          <p className="text-sm text-muted-foreground">
-            {metadata.user.login} wants to merge into{' '}
-            <code className="text-xs bg-muted px-1 py-0.5 rounded">
-              {metadata.base.ref}
-            </code>
-            {' '}from{' '}
-            <code className="text-xs bg-muted px-1 py-0.5 rounded">
-              {metadata.head.ref}
-            </code>
-          </p>
+    <div className="border rounded-lg bg-card mx-4 mt-4">
+      <div className="p-4">
+        <div className="flex items-center gap-3 mb-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 flex-shrink-0"
+            onClick={onToggleSidebar}
+            title={sidebarOpen ? 'Hide sidebar (⌘B)' : 'Show sidebar (⌘B)'}
+          >
+            <PanelLeft className="size-4" />
+          </Button>
+          <img
+            src={metadata.user.avatar_url}
+            alt={metadata.user.login}
+            className="w-8 h-8 rounded-full"
+          />
+          <div className="flex-1 min-w-0">
+            <h1 className="text-lg font-semibold truncate">{metadata.title}</h1>
+            <p className="text-sm text-muted-foreground">
+              {metadata.user.login} wants to merge into{' '}
+              <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                {metadata.base.ref}
+              </code>
+              {' '}from{' '}
+              <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                {metadata.head.ref}
+              </code>
+            </p>
+          </div>
+          <Button
+            variant={commentsPanelOpen ? 'secondary' : 'ghost'}
+            size="icon"
+            className="size-8 flex-shrink-0"
+            onClick={onToggleCommentsPanel}
+            title={commentsPanelOpen ? 'Hide comments' : 'Show comments'}
+          >
+            <MessageSquare className="size-4" />
+          </Button>
         </div>
-        <Button
-          variant={commentsPanelOpen ? 'secondary' : 'ghost'}
-          size="icon"
-          className="size-8 flex-shrink-0"
-          onClick={onToggleCommentsPanel}
-          title={commentsPanelOpen ? 'Hide comments' : 'Show comments'}
-        >
-          <MessageSquare className="size-4" />
-        </Button>
+
+        <div className="flex flex-wrap items-center gap-3 gap-y-2 text-sm">
+          <span className="text-green-600 font-medium">+{metadata.additions}</span>
+          <span className="text-red-600 font-medium">-{metadata.deletions}</span>
+          <span className="text-muted-foreground">
+            {fileCount} file{fileCount !== 1 ? 's' : ''} changed
+          </span>
+
+          {checksData !== undefined && checksData.length > 0 && (
+            <ChecksIndicator checks={checksData} />
+          )}
+
+          <div className="flex flex-wrap items-center gap-1 gap-y-2 ml-auto">
+            {reviews && reviews.length > 0 &&
+              reviews.map((review) => (
+                <ReviewBadge key={review.id} review={review} />
+              ))
+            }
+            <ReviewChangesButton
+              onSubmit={onSubmitReview}
+              isSubmitting={isSubmittingReview}
+            />
+          </div>
+        </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-4 gap-y-2 text-sm">
-        <span className="text-green-600 font-medium">
-          +{metadata.additions}
-        </span>
-        <span className="text-red-600 font-medium">
-          -{metadata.deletions}
-        </span>
-        <span className="text-muted-foreground">
-          {fileCount} file{fileCount !== 1 ? 's' : ''} changed
-        </span>
+      <Collapsible.Root open={descOpen} onOpenChange={handleDescToggle}>
+        <div className="border-t px-4 py-2 flex items-center">
+          <Collapsible.Trigger asChild>
+            <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+              {descOpen ? (
+                <ChevronDown className="size-3.5" />
+              ) : (
+                <ChevronRight className="size-3.5" />
+              )}
+              Description
+            </button>
+          </Collapsible.Trigger>
+        </div>
+        <Collapsible.Content>
+          <div className="px-4 pb-4">
+            <PRDescription body={metadata.body} />
+          </div>
+        </Collapsible.Content>
+      </Collapsible.Root>
+    </div>
+  )
+}
 
-        {reviews && reviews.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1 gap-y-2 ml-auto">
-            {reviews.map((review) => (
-              <ReviewBadge key={review.id} review={review} />
+function PRDescription({ body }: { body: string | null }) {
+  if (!body) {
+    return (
+      <p className="text-xs text-muted-foreground italic">No description provided.</p>
+    )
+  }
+
+  return (
+    <div className="text-sm text-foreground whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto rounded border bg-muted/30 p-3 font-mono text-xs">
+      {body}
+    </div>
+  )
+}
+
+const CHECK_CONCLUSION_ORDER = ['failure', 'timed_out', 'action_required', 'pending', 'success', 'neutral', 'skipped', 'cancelled']
+
+function ChecksIndicator({ checks }: { checks: MergedCheckRun[] }) {
+  const [open, setOpen] = useState(false)
+  const aggregate = aggregateChecks(checks)
+
+  const failureCount = checks.filter(
+    (c) => c.conclusion === 'failure' || c.conclusion === 'timed_out' || c.conclusion === 'action_required',
+  ).length
+  const pendingCount = checks.filter((c) => c.status !== 'completed' || c.conclusion == null).length
+  const successCount = checks.filter((c) => c.conclusion === 'success' || c.conclusion === 'neutral' || c.conclusion === 'skipped').length
+
+  const sorted = [...checks].sort((a, b) => {
+    const ai = CHECK_CONCLUSION_ORDER.indexOf(a.conclusion ?? 'pending')
+    const bi = CHECK_CONCLUSION_ORDER.indexOf(b.conclusion ?? 'pending')
+    return ai - bi
+  })
+
+  const aggregateIcon =
+    aggregate === 'success' ? (
+      <CheckCircle2 className="size-3.5 text-green-500" />
+    ) : aggregate === 'failure' ? (
+      <XCircle className="size-3.5 text-red-500" />
+    ) : (
+      <Clock className="size-3.5 text-yellow-500" />
+    )
+
+  const aggregateLabel =
+    aggregate === 'success'
+      ? `${successCount} check${successCount !== 1 ? 's' : ''} passed`
+      : aggregate === 'failure'
+      ? `${failureCount} check${failureCount !== 1 ? 's' : ''} failed`
+      : `${pendingCount} check${pendingCount !== 1 ? 's' : ''} pending`
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <button className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+          {aggregateIcon}
+          {aggregateLabel}
+          <ChevronDown className="size-3" />
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          side="bottom"
+          align="start"
+          sideOffset={6}
+          className="z-50 w-80 rounded-lg border bg-popover p-2 shadow-md text-popover-foreground outline-none"
+        >
+          <div className="space-y-1 max-h-72 overflow-y-auto">
+            {sorted.map((check) => (
+              <CheckRunRow key={check.id} check={check} />
             ))}
           </div>
-        )}
-      </div>
+          <Popover.Arrow className="fill-popover" />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  )
+}
+
+function CheckRunRow({ check }: { check: MergedCheckRun }) {
+  const isPending = check.status !== 'completed' || check.conclusion == null
+  const isSuccess = check.conclusion === 'success' || check.conclusion === 'neutral' || check.conclusion === 'skipped'
+  const isFailure = check.conclusion === 'failure' || check.conclusion === 'timed_out' || check.conclusion === 'action_required'
+
+  const icon = isPending ? (
+    <Clock className="size-3.5 text-yellow-500 flex-shrink-0" />
+  ) : isSuccess ? (
+    <CheckCircle2 className="size-3.5 text-green-500 flex-shrink-0" />
+  ) : isFailure ? (
+    <XCircle className="size-3.5 text-red-500 flex-shrink-0" />
+  ) : (
+    <Circle className="size-3.5 text-muted-foreground flex-shrink-0" />
+  )
+
+  const conclusionLabel = isPending
+    ? 'In progress'
+    : check.conclusion
+      ? check.conclusion.replace(/_/g, ' ')
+      : 'Queued'
+
+  const inner = (
+    <div className="flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-muted/50 transition-colors">
+      {icon}
+      <span className="flex-1 truncate">{check.name}</span>
+      <span className="text-muted-foreground capitalize">{conclusionLabel}</span>
+      {check.url && <ExternalLink className="size-3 text-muted-foreground flex-shrink-0" />}
     </div>
+  )
+
+  if (check.url) {
+    return (
+      <a href={check.url} target="_blank" rel="noreferrer" className="block">
+        {inner}
+      </a>
+    )
+  }
+  return inner
+}
+
+type ReviewEvent = SubmitReviewParams['event']
+
+function ReviewChangesButton({
+  onSubmit,
+  isSubmitting,
+}: {
+  onSubmit: (params: SubmitReviewParams) => void
+  isSubmitting: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const [event, setEvent] = useState<ReviewEvent>('COMMENT')
+  const [body, setBody] = useState('')
+
+  const handleSubmit = () => {
+    onSubmit({ event, body })
+    setOpen(false)
+    setBody('')
+    setEvent('COMMENT')
+  }
+
+  const eventLabel: Record<ReviewEvent, string> = {
+    APPROVE: 'Approve',
+    REQUEST_CHANGES: 'Request changes',
+    COMMENT: 'Comment',
+  }
+
+  const eventStyles: Record<ReviewEvent, string> = {
+    APPROVE: 'text-green-600',
+    REQUEST_CHANGES: 'text-red-600',
+    COMMENT: 'text-foreground',
+  }
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <Button variant="outline" size="sm">
+          Review changes
+          <ChevronDown className="size-3.5" />
+        </Button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          side="bottom"
+          align="end"
+          sideOffset={6}
+          className="z-50 w-80 rounded-lg border bg-popover p-4 shadow-md text-popover-foreground outline-none space-y-3"
+        >
+          <p className="text-sm font-medium">Submit review</p>
+          <textarea
+            className="w-full rounded border bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+            placeholder="Leave a comment (optional)"
+            rows={3}
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+          />
+          <RadioGroup.Root
+            value={event}
+            onValueChange={(v) => setEvent(v as ReviewEvent)}
+            className="space-y-2"
+          >
+            {(['COMMENT', 'APPROVE', 'REQUEST_CHANGES'] as ReviewEvent[]).map((e) => (
+              <label
+                key={e}
+                className="flex items-center gap-2 cursor-pointer text-sm"
+              >
+                <RadioGroup.Item
+                  value={e}
+                  className="size-4 rounded-full border border-input bg-background ring-offset-background focus:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=checked]:border-primary data-[state=checked]:bg-primary"
+                >
+                  <RadioGroup.Indicator className="flex items-center justify-center">
+                    <span className="block size-2 rounded-full bg-primary-foreground" />
+                  </RadioGroup.Indicator>
+                </RadioGroup.Item>
+                <span className={eventStyles[e]}>{eventLabel[e]}</span>
+              </label>
+            ))}
+          </RadioGroup.Root>
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              onClick={handleSubmit}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? 'Submitting...' : `Submit ${eventLabel[event].toLowerCase()}`}
+            </Button>
+          </div>
+          <Popover.Arrow className="fill-popover" />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   )
 }
 

@@ -1,0 +1,20 @@
+{
+  "state": "pending",
+  "total_count": 2,
+  "statuses": [
+    {
+      "id": 2001,
+      "state": "success",
+      "description": "Code coverage check passed",
+      "target_url": "https://codecov.io/gh/denoland/deno/pull/34417",
+      "context": "codecov/patch"
+    },
+    {
+      "id": 2002,
+      "state": "pending",
+      "description": "Waiting for external validation",
+      "target_url": null,
+      "context": "security/audit"
+    }
+  ]
+}
