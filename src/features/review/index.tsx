@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo, useState, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useRef, useMemo, useState, useCallback } from 'react'
 import {
   usePRMetadata,
   usePRDiff,
@@ -46,6 +46,12 @@ import { FilePalette } from '@/components/file-palette'
 import { ShortcutsHelp } from '@/components/shortcuts-help'
 import { FileTreeSidebar } from '@/components/file-tree-sidebar'
 import { CommentsPanel } from '@/components/comments-panel'
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from '@/components/ui/resizable'
+import type { ImperativePanelHandle } from 'react-resizable-panels'
 
 interface ActiveComment {
   file: string
@@ -210,16 +216,54 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [commentsPanelOpen, setCommentsPanelOpen] = useState(false)
   const userToggledSidebar = useRef(false)
+  const leftPanelRef = useRef<ImperativePanelHandle>(null)
+  const rightPanelRef = useRef<ImperativePanelHandle>(null)
+  // Whether react-resizable-panels has a persisted layout from a previous
+  // visit. If so, we respect it instead of forcing the file tree open.
+  const hasPersistedLayout = useRef(
+    typeof window !== 'undefined' &&
+      window.localStorage.getItem(
+        'react-resizable-panels:reviews-plus:review-panels',
+      ) != null,
+  )
   const [activeFile, setActiveFile] = useState<string | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const codeViewRef = useRef<CodeViewHandle<AnnotationPayload>>(null)
   const isScrollingFromTreeRef = useRef(false)
 
+  // Sync panel-open state to whatever react-resizable-panels restored from its
+  // persisted layout on mount (onExpand/onCollapse don't fire for the initial
+  // restored layout).
+  useLayoutEffect(() => {
+    setSidebarOpen(!(leftPanelRef.current?.isCollapsed() ?? true))
+    setCommentsPanelOpen(!(rightPanelRef.current?.isCollapsed() ?? true))
+  }, [])
+
   useEffect(() => {
-    if (!userToggledSidebar.current && files.data && files.data.length > 3) {
-      setSidebarOpen(true)
+    if (
+      !hasPersistedLayout.current &&
+      !userToggledSidebar.current &&
+      files.data &&
+      files.data.length > 3
+    ) {
+      leftPanelRef.current?.expand()
     }
   }, [files.data])
+
+  const toggleSidebar = useCallback(() => {
+    userToggledSidebar.current = true
+    const panel = leftPanelRef.current
+    if (!panel) return
+    if (panel.isCollapsed()) panel.expand()
+    else panel.collapse()
+  }, [])
+
+  const toggleCommentsPanel = useCallback(() => {
+    const panel = rightPanelRef.current
+    if (!panel) return
+    if (panel.isCollapsed()) panel.expand()
+    else panel.collapse()
+  }, [])
 
   const storageKey = `reviews-plus:viewed:${owner}/${repo}/${number}`
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(() => {
@@ -425,7 +469,7 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   )
 
   const handlePanelReply = useCallback(
-    (
+    async (
       rootId: number,
       path: string,
       line: number,
@@ -434,20 +478,21 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     ) => {
       if (!metadata.data) return
       const ghSide = side === 'deletions' ? 'LEFT' : 'RIGHT'
-      postComment.mutate(
-        {
+      try {
+        await postComment.mutateAsync({
           body,
           path,
           line,
           commit_id: metadata.data.head.sha,
           side: ghSide,
           in_reply_to: rootId,
-        },
-        {
-          onSuccess: () => toast.success('Reply posted'),
-          onError: (err) => toast.error(`Failed to post reply: ${err.message}`),
-        },
-      )
+        })
+        toast.success('Reply posted')
+      } catch (err) {
+        toast.error(`Failed to post reply: ${(err as Error).message}`)
+        // Rethrow so the composer keeps the user's draft text.
+        throw err
+      }
     },
     [metadata.data, postComment],
   )
@@ -616,8 +661,14 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
         key: 'b',
         metaKey: true,
         handler: () => {
-          userToggledSidebar.current = true
-          setSidebarOpen((prev) => !prev)
+          toggleSidebar()
+        },
+      },
+      {
+        key: 'j',
+        metaKey: true,
+        handler: () => {
+          toggleCommentsPanel()
         },
       },
       {
@@ -626,7 +677,7 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
         handler: () => setShowHelp((prev) => !prev),
       },
     ],
-    [currentFileIndex, parsedFiles, scrollToFileByIndex, handleStartComment],
+    [currentFileIndex, parsedFiles, scrollToFileByIndex, handleStartComment, toggleSidebar, toggleCommentsPanel],
   )
 
   useKeyboardShortcuts(shortcuts)
@@ -710,28 +761,50 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
 
   return (
     <>
-      <div className="flex h-full overflow-hidden">
-        <FileTreeSidebar
-          files={files.data ?? []}
-          onSelectFile={handleScrollToFile}
-          isOpen={sidebarOpen}
-          activeFile={activeFile}
-          viewedFiles={viewedFiles}
-          onMarkViewed={handleMarkViewed}
-        />
-        <div className="flex-1 flex flex-col overflow-hidden">
+      <ResizablePanelGroup
+        direction="horizontal"
+        autoSaveId="reviews-plus:review-panels"
+        className="h-full overflow-hidden"
+      >
+        <ResizablePanel
+          ref={leftPanelRef}
+          id="file-tree"
+          order={1}
+          collapsible
+          collapsedSize={0}
+          defaultSize={0}
+          minSize={16}
+          maxSize={42}
+          onCollapse={() => setSidebarOpen(false)}
+          onExpand={() => setSidebarOpen(true)}
+        >
+          <FileTreeSidebar
+            files={files.data ?? []}
+            onSelectFile={handleScrollToFile}
+            isOpen={sidebarOpen}
+            activeFile={activeFile}
+            viewedFiles={viewedFiles}
+            onMarkViewed={handleMarkViewed}
+          />
+        </ResizablePanel>
+
+        <ResizableHandle withHandle />
+
+        <ResizablePanel
+          id="diff"
+          order={2}
+          minSize={30}
+          className="flex flex-col overflow-hidden"
+        >
           {metadata.data && (
             <PRHeader
               metadata={metadata.data}
               reviews={reviews.data}
               fileCount={files.data?.length ?? metadata.data.changed_files}
               sidebarOpen={sidebarOpen}
-              onToggleSidebar={() => {
-                userToggledSidebar.current = true
-                setSidebarOpen((prev) => !prev)
-              }}
+              onToggleSidebar={toggleSidebar}
               commentsPanelOpen={commentsPanelOpen}
-              onToggleCommentsPanel={() => setCommentsPanelOpen((prev) => !prev)}
+              onToggleCommentsPanel={toggleCommentsPanel}
             />
           )}
           <WorkerPoolContextProvider
@@ -749,19 +822,35 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
               containerRef={scrollContainerRef}
             />
           </WorkerPoolContextProvider>
-        </div>
-        {commentsPanelOpen && (
-          <CommentsPanel
-            fileOrder={fileNameOrder}
-            commentsByPath={commentsByPath}
-            resolvedById={threadStateById.resolved}
-            outdatedById={threadStateById.outdated}
-            onGoToComment={scrollToComment}
-            onSubmitReply={handlePanelReply}
-            isSubmitting={postComment.isPending}
-          />
-        )}
-      </div>
+        </ResizablePanel>
+
+        <ResizableHandle withHandle />
+
+        <ResizablePanel
+          ref={rightPanelRef}
+          id="comments"
+          order={3}
+          collapsible
+          collapsedSize={0}
+          defaultSize={0}
+          minSize={20}
+          maxSize={45}
+          onCollapse={() => setCommentsPanelOpen(false)}
+          onExpand={() => setCommentsPanelOpen(true)}
+        >
+          {commentsPanelOpen && (
+            <CommentsPanel
+              fileOrder={fileNameOrder}
+              commentsByPath={commentsByPath}
+              resolvedById={threadStateById.resolved}
+              outdatedById={threadStateById.outdated}
+              onGoToComment={scrollToComment}
+              onSubmitReply={handlePanelReply}
+              isSubmitting={postComment.isPending}
+            />
+          )}
+        </ResizablePanel>
+      </ResizablePanelGroup>
 
       <FilePalette
         open={filePaletteOpen}
@@ -793,7 +882,7 @@ function PRHeader({
   onToggleCommentsPanel: () => void
 }) {
   return (
-    <div className="border rounded-lg p-4 bg-card">
+    <div className="border rounded-lg p-4 bg-card mx-4 mt-4">
       <div className="flex items-center gap-3 mb-2">
         <Button
           variant="ghost"

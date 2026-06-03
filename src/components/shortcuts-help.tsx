@@ -8,6 +8,7 @@ const shortcuts = [
   { keys: 'c', description: 'Comment on current file' },
   { keys: '⌘P', description: 'Jump to file' },
   { keys: '⌘B', description: 'Toggle file sidebar' },
+  { keys: '⌘J', description: 'Toggle comments panel' },
   { keys: '⌘O', description: 'Focus URL input' },
   { keys: '⌘Enter', description: 'Submit comment' },
   { keys: 'Esc', description: 'Cancel / close' },

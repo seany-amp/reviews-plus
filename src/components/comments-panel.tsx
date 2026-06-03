@@ -10,7 +10,7 @@ interface CommentsPanelProps {
   resolvedById: Map<number, boolean>
   outdatedById: Map<number, boolean>
   onGoToComment: GoToComment
-  onSubmitReply: (rootId: number, path: string, line: number, side: 'additions' | 'deletions', body: string) => void
+  onSubmitReply: (rootId: number, path: string, line: number, side: 'additions' | 'deletions', body: string) => Promise<void> | void
   isSubmitting: boolean
 }
 
@@ -101,7 +101,7 @@ export function CommentsPanel({
   const totalThreads = groups.reduce((sum, g) => sum + g.threads.length, 0)
 
   return (
-    <div className="w-[300px] md:w-[340px] max-w-[45vw] h-full border-l overflow-y-auto flex-shrink-0 flex flex-col">
+    <div className="h-full w-full overflow-hidden flex flex-col">
       <div className="px-3 py-2 border-b">
         <div className="text-sm font-medium text-muted-foreground">
           Comments ({totalThreads})
@@ -161,18 +161,24 @@ function ThreadRow({
     if (canNavigate) onGoToComment(root.path, root.line!, side)
   }
 
+  // Single-click jumps the diff to this comment's line (when navigable) and
+  // expands the thread. Clicking an already-expanded thread just collapses it.
+  const handleRowActivate = () => {
+    if (!expanded && canNavigate) goToLocation()
+    onToggle()
+  }
+
   return (
     <div className={collapsedByDefault ? 'opacity-50' : undefined}>
       <div
         className="group w-full text-left px-3 py-2 hover:bg-muted/50 flex gap-2 items-start cursor-pointer"
         role="button"
         tabIndex={0}
-        onClick={onToggle}
-        onDoubleClick={goToLocation}
+        onClick={handleRowActivate}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault()
-            onToggle()
+            handleRowActivate()
           }
         }}
       >
@@ -236,7 +242,6 @@ function ThreadRow({
           ))}
           {root.line != null && (
             <ReplyComposer
-              isSubmitting={isSubmitting}
               onSubmit={(body) => onSubmitReply(root.id, root.path, root.line!, side, body)}
             />
           )}
@@ -267,49 +272,62 @@ function ThreadComment({ comment, isReply }: { comment: PRComment; isReply?: boo
 
 function ReplyComposer({
   onSubmit,
-  isSubmitting,
 }: {
-  onSubmit: (body: string) => void
-  isSubmitting: boolean
+  onSubmit: (body: string) => Promise<void> | void
 }) {
   const [body, setBody] = useState('')
+  const [posting, setPosting] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    textareaRef.current?.focus()
+    // Focus for quick replies, but don't yank the panel's scroll position
+    // (threads are opened by clicking a comment, which also scrolls the diff).
+    textareaRef.current?.focus({ preventScroll: true })
   }, [])
 
-  const submit = () => {
+  const submit = async () => {
     const value = body.trim()
-    if (value) {
-      onSubmit(value)
-      setBody('')
+    if (!value || posting) return
+    setPosting(true)
+    try {
+      await onSubmit(value)
+      setBody('') // clear only after a successful post
+    } catch {
+      // Keep the draft so the user can retry without retyping.
+    } finally {
+      setPosting(false)
     }
   }
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-1 pt-2 mt-1 border-t border-border/60">
       <textarea
         ref={textareaRef}
-        className="w-full text-xs border rounded p-1.5 bg-background resize-y"
+        className="w-full text-xs border rounded p-1.5 bg-background resize-y focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
         rows={2}
-        placeholder="Reply..."
+        placeholder="Reply…"
         value={body}
+        disabled={posting}
         onChange={(e) => setBody(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault()
-            submit()
+            void submit()
           }
         }}
       />
-      <button
-        className="text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground disabled:opacity-50"
-        disabled={isSubmitting || !body.trim()}
-        onClick={submit}
-      >
-        {isSubmitting ? 'Posting...' : 'Reply'}
-      </button>
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] text-muted-foreground select-none">
+          ⌘↵ to send
+        </span>
+        <button
+          className="text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground disabled:opacity-50"
+          disabled={posting || !body.trim()}
+          onClick={() => void submit()}
+        >
+          {posting ? 'Posting…' : 'Reply'}
+        </button>
+      </div>
     </div>
   )
 }

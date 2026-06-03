@@ -92,7 +92,7 @@ export function FileTreeSidebar({
     files.length > 0 ? Math.round((viewedCount / files.length) * 100) : 0
 
   return (
-    <div className="w-[220px] md:w-[280px] max-w-[45vw] h-full border-r overflow-hidden flex-shrink-0 flex flex-col">
+    <div className="h-full w-full overflow-hidden flex flex-col">
       <div className="px-3 py-2 border-b space-y-1">
         <div className="text-sm font-medium text-muted-foreground">
           Files ({viewedCount}/{files.length} reviewed)

@@ -54,10 +54,10 @@ fn generate_diff(left: &Path, right: &Path) -> Result<String, String> {
         output.push_str(&format!("--- {}\n", if left_content.is_some() { &left_label } else { "/dev/null" }));
         output.push_str(&format!("+++ {}\n", if right_content.is_some() { &right_label } else { "/dev/null" }));
 
-        let left_lines: Vec<&str> = left_content.as_deref().map(|c| c.lines().collect()).unwrap_or_default();
-        let right_lines: Vec<&str> = right_content.as_deref().map(|c| c.lines().collect()).unwrap_or_default();
+        let left_text = left_content.as_deref().unwrap_or("");
+        let right_text = right_content.as_deref().unwrap_or("");
 
-        let hunks = compute_hunks(&left_lines, &right_lines);
+        let hunks = compute_hunks(left_text, right_text);
         for hunk in hunks {
             output.push_str(&hunk);
         }
@@ -112,91 +112,180 @@ fn read_text(path: &Path) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-fn compute_hunks(left: &[&str], right: &[&str]) -> Vec<String> {
-    let diff = diff::slice(left, right);
+/// Build the `@@ ... @@` unified-diff hunks for a single file.
+///
+/// Delegates hunk grouping to the `similar` crate, which correctly merges
+/// changes that are closer together than `2 * context_radius` lines instead of
+/// emitting overlapping/duplicated context (the bug in the previous
+/// hand-rolled generator). Each returned string is one hunk, header included,
+/// matching the shape `generate_diff` expects to concatenate.
+fn compute_hunks(left: &str, right: &str) -> Vec<String> {
+    use similar::TextDiff;
 
-    let mut hunks = Vec::new();
-    let mut current_hunk = String::new();
-    let mut left_pos: usize = 0;
-    let mut right_pos: usize = 0;
-    let mut hunk_left_start: usize = 0;
-    let mut hunk_right_start: usize = 0;
-    let mut hunk_left_count: usize = 0;
-    let mut hunk_right_count: usize = 0;
-    let mut in_hunk = false;
-    let mut context_after: usize = 0;
+    let diff = TextDiff::from_lines(left, right);
+    let mut unified = diff.unified_diff();
+    unified.context_radius(3).missing_newline_hint(false);
 
-    let context_lines = 3;
+    unified.iter_hunks().map(|hunk| hunk.to_string()).collect()
+}
 
-    for result in &diff {
-        match result {
-            diff::Result::Both(line, _) => {
-                left_pos += 1;
-                right_pos += 1;
-                if in_hunk {
-                    context_after += 1;
-                    current_hunk.push_str(&format!(" {line}\n"));
-                    hunk_left_count += 1;
-                    hunk_right_count += 1;
-                    if context_after >= context_lines {
-                        hunks.push(format!(
-                            "@@ -{},{} +{},{} @@\n{}",
-                            hunk_left_start, hunk_left_count, hunk_right_start, hunk_right_count, current_hunk
-                        ));
-                        current_hunk.clear();
-                        in_hunk = false;
-                        context_after = 0;
-                    }
-                }
+#[cfg(test)]
+mod tests {
+    use super::compute_hunks;
+
+    /// Parsed `@@ -ls,lc +rs,rc @@` header.
+    struct Header {
+        left_start: usize,
+        left_count: usize,
+        right_start: usize,
+        right_count: usize,
+    }
+
+    fn parse_header(line: &str) -> Header {
+        // Format: "@@ -ls,lc +rs,rc @@"
+        let inner = line
+            .trim_start_matches("@@ ")
+            .split(" @@")
+            .next()
+            .expect("header body");
+        let mut parts = inner.split(' ');
+        let left = parts.next().unwrap().trim_start_matches('-');
+        let right = parts.next().unwrap().trim_start_matches('+');
+
+        fn pair(spec: &str) -> (usize, usize) {
+            match spec.split_once(',') {
+                Some((s, c)) => (s.parse().unwrap(), c.parse().unwrap()),
+                // A single number means a count of 1 in unified-diff format.
+                None => (spec.parse().unwrap(), 1),
             }
-            diff::Result::Left(line) => {
-                if !in_hunk {
-                    in_hunk = true;
-                    hunk_left_start = left_pos.saturating_sub(context_lines) + 1;
-                    hunk_right_start = right_pos.saturating_sub(context_lines) + 1;
-                    hunk_left_count = 0;
-                    hunk_right_count = 0;
-                    // Add leading context
-                    let start = left_pos.saturating_sub(context_lines);
-                    for i in start..left_pos {
-                        current_hunk.push_str(&format!(" {}\n", left[i]));
-                        hunk_left_count += 1;
-                        hunk_right_count += 1;
-                    }
-                }
-                context_after = 0;
-                current_hunk.push_str(&format!("-{line}\n"));
-                hunk_left_count += 1;
-                left_pos += 1;
-            }
-            diff::Result::Right(line) => {
-                if !in_hunk {
-                    in_hunk = true;
-                    hunk_left_start = left_pos.saturating_sub(context_lines) + 1;
-                    hunk_right_start = right_pos.saturating_sub(context_lines) + 1;
-                    hunk_left_count = 0;
-                    hunk_right_count = 0;
-                    let start = left_pos.saturating_sub(context_lines);
-                    for i in start..left_pos {
-                        current_hunk.push_str(&format!(" {}\n", left[i]));
-                        hunk_left_count += 1;
-                        hunk_right_count += 1;
-                    }
-                }
-                context_after = 0;
-                current_hunk.push_str(&format!("+{line}\n"));
-                hunk_right_count += 1;
-                right_pos += 1;
-            }
+        }
+
+        let (left_start, left_count) = pair(left);
+        let (right_start, right_count) = pair(right);
+        Header {
+            left_start,
+            left_count,
+            right_start,
+            right_count,
         }
     }
 
-    if in_hunk && !current_hunk.is_empty() {
-        hunks.push(format!(
-            "@@ -{},{} +{},{} @@\n{}",
-            hunk_left_start, hunk_left_count, hunk_right_start, hunk_right_count, current_hunk
-        ));
+    /// Every hunk's `@@` header line counts must equal the number of body
+    /// lines that touch each side ( ' '/'-' for left, ' '/'+' for right ).
+    fn assert_header_counts_reconcile(hunk: &str) {
+        let mut lines = hunk.lines();
+        let header = parse_header(lines.next().expect("hunk has a header"));
+
+        let mut left = 0usize;
+        let mut right = 0usize;
+        for line in lines {
+            match line.chars().next() {
+                Some(' ') => {
+                    left += 1;
+                    right += 1;
+                }
+                Some('-') => left += 1,
+                Some('+') => right += 1,
+                _ => {}
+            }
+        }
+
+        assert_eq!(
+            header.left_count, left,
+            "left count mismatch in hunk:\n{hunk}"
+        );
+        assert_eq!(
+            header.right_count, right,
+            "right count mismatch in hunk:\n{hunk}"
+        );
     }
 
-    hunks
+    /// Hunks must be strictly ordered and non-overlapping on both sides.
+    fn assert_no_overlap(hunks: &[String]) {
+        let mut prev_left_end = 0usize;
+        let mut prev_right_end = 0usize;
+        for hunk in hunks {
+            let h = parse_header(hunk.lines().next().unwrap());
+            assert!(
+                h.left_start > prev_left_end,
+                "hunk left range overlaps previous (start {} <= prev end {}):\n{hunk}",
+                h.left_start,
+                prev_left_end
+            );
+            assert!(
+                h.right_start > prev_right_end,
+                "hunk right range overlaps previous (start {} <= prev end {}):\n{hunk}",
+                h.right_start,
+                prev_right_end
+            );
+            prev_left_end = h.left_start + h.left_count.saturating_sub(1);
+            prev_right_end = h.right_start + h.right_count.saturating_sub(1);
+        }
+    }
+
+    #[test]
+    fn closely_spaced_edits_merge_into_one_hunk() {
+        // Two edits only one line apart -> their context overlaps, so similar
+        // merges them into a single hunk (the old generator duplicated the
+        // shared context and emitted two unreconcilable headers).
+        let left = "a\nb\nc\nX\nd\nY\ne\nf\ng\n";
+        let right = "a\nb\nc\nX2\nd\nY2\ne\nf\ng\n";
+
+        let hunks = compute_hunks(left, right);
+
+        assert_eq!(hunks.len(), 1, "expected a single merged hunk: {hunks:?}");
+        assert_header_counts_reconcile(&hunks[0]);
+        assert_no_overlap(&hunks);
+        // The shared context line "d" must appear exactly once.
+        assert_eq!(
+            hunks[0].matches("\n d\n").count(),
+            1,
+            "shared context duplicated:\n{}",
+            hunks[0]
+        );
+    }
+
+    #[test]
+    fn far_apart_edits_produce_separate_hunks() {
+        let left = "a\nb\nc\nd\ne\nX\nf\ng\nh\ni\nj\nk\nl\nm\nn\nY\no\np\nq\n";
+        let right = "a\nb\nc\nd\ne\nX2\nf\ng\nh\ni\nj\nk\nl\nm\nn\nY2\no\np\nq\n";
+
+        let hunks = compute_hunks(left, right);
+
+        assert_eq!(hunks.len(), 2, "expected two distinct hunks: {hunks:?}");
+        for hunk in &hunks {
+            assert_header_counts_reconcile(hunk);
+        }
+        assert_no_overlap(&hunks);
+    }
+
+    #[test]
+    fn identical_content_produces_no_hunks() {
+        let text = "a\nb\nc\n";
+        assert!(compute_hunks(text, text).is_empty());
+    }
+
+    #[test]
+    fn new_file_emits_single_add_hunk() {
+        let hunks = compute_hunks("", "a\nb\nc\n");
+        assert_eq!(hunks.len(), 1);
+        let header = hunks[0].lines().next().unwrap();
+        assert!(
+            header.starts_with("@@ -0,0 "),
+            "new file should start at -0,0: {header}"
+        );
+        assert_header_counts_reconcile(&hunks[0]);
+    }
+
+    #[test]
+    fn deleted_file_emits_single_remove_hunk() {
+        let hunks = compute_hunks("a\nb\nc\n", "");
+        assert_eq!(hunks.len(), 1);
+        let header = hunks[0].lines().next().unwrap();
+        assert!(
+            header.contains(" +0,0 @@"),
+            "deleted file should target +0,0: {header}"
+        );
+        assert_header_counts_reconcile(&hunks[0]);
+    }
 }
