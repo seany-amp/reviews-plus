@@ -225,9 +225,14 @@ diffs-container {
 
 .diffs-comment-form-buttons {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 8px;
+}
+
+.diffs-comment-form-buttons button {
+  white-space: nowrap;
 }
 
 .diffs-comment-cancel-btn {
@@ -316,4 +321,122 @@ diffs-container {
 
 .diffs-comment-body {
   white-space: pre-wrap;
+}
+
+/* Rendered markdown (PR description, etc.) */
+.markdown-body {
+  color: var(--foreground, #1f2328);
+  word-wrap: break-word;
+}
+
+.markdown-body > *:first-child {
+  margin-top: 0;
+}
+
+.markdown-body > *:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 16px 0 8px;
+}
+
+.markdown-body h1 {
+  font-size: 1.3em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border, #d0d7de);
+}
+
+.markdown-body h2 {
+  font-size: 1.15em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border, #d0d7de);
+}
+
+.markdown-body h3 {
+  font-size: 1.05em;
+}
+
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body blockquote,
+.markdown-body table {
+  margin: 0 0 12px;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 1.5em;
+}
+
+.markdown-body li {
+  margin: 2px 0;
+}
+
+.markdown-body li > ul,
+.markdown-body li > ol {
+  margin: 2px 0;
+}
+
+.markdown-body a {
+  color: #1f6feb;
+  text-decoration: none;
+}
+
+.markdown-body a:hover {
+  text-decoration: underline;
+}
+
+.markdown-body code {
+  padding: 0.15em 0.35em;
+  font-size: 0.9em;
+  border-radius: 4px;
+  background-color: var(--muted, rgba(110, 118, 129, 0.15));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.markdown-body pre {
+  padding: 12px;
+  overflow-x: auto;
+  border-radius: 6px;
+  background-color: var(--muted, #f6f8fa);
+  margin: 0 0 12px;
+}
+
+.markdown-body pre code {
+  padding: 0;
+  background: transparent;
+  font-size: 0.85em;
+}
+
+.markdown-body blockquote {
+  padding-left: 1em;
+  border-left: 3px solid var(--border, #d0d7de);
+  color: var(--muted-foreground, #656d76);
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--border, #d0d7de);
+  padding: 4px 10px;
+}
+
+.markdown-body img {
+  max-width: 100%;
+}
+
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--border, #d0d7de);
+  margin: 16px 0;
 }

@@ -19,6 +19,14 @@ type InvokeArgs = Record<string, unknown>;
 // survive the post-mutation refetch instead of reverting to the static fixture.
 const postedComments: PRComment[] = [];
 
+// Stateful PR body so editing the description (own PR) survives refetch.
+let prBodyOverride: string | null = null;
+
+// Mock identity — matches the fixture PR author so "my PR" affordances
+// (edit description, edit/delete own comments) are exercisable in browser mode.
+const MOCK_LOGIN = 'divybot';
+const MOCK_AVATAR = 'https://avatars.githubusercontent.com/u/1234567';
+
 // Mutable copy of review threads so resolve/unresolve mutations flip state.
 let mutableThreads: PRReviewThread[] = (
   (prReviewThreads as { data: { repository: { pullRequest: { reviewThreads: { nodes: PRReviewThread[] } } } } })
@@ -28,9 +36,19 @@ let mutableThreads: PRReviewThread[] = (
 // Stateful reviews list — seeded from fixture, extended by POSTs.
 const liveReviews: PRReview[] = [...(prReviews as PRReview[])];
 
+interface PostReviewComment {
+  path: string;
+  line: number;
+  side?: string;
+  body: string;
+  start_line?: number;
+  start_side?: string;
+}
+
 interface PostReviewBody {
   event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
   body: string;
+  comments?: PostReviewComment[];
 }
 
 function createPostedReview(raw: string | undefined): PRReview {
@@ -43,14 +61,33 @@ function createPostedReview(raw: string | undefined): PRReview {
   const review: PRReview = {
     id: Date.now(),
     user: {
-      login: 'octocat',
-      avatar_url: 'https://avatars.githubusercontent.com/u/583231',
+      login: MOCK_LOGIN,
+      avatar_url: MOCK_AVATAR,
     },
     state: stateMap[params.event] ?? 'COMMENTED',
     body: params.body ?? null,
     submitted_at: new Date().toISOString(),
   };
   liveReviews.push(review);
+
+  // Surface staged comments so they appear as posted after the review submits
+  for (const c of params.comments ?? []) {
+    postedComments.push({
+      id: Date.now() + Math.random(),
+      user: {
+        login: 'octocat',
+        avatar_url: 'https://avatars.githubusercontent.com/u/583231',
+      },
+      body: c.body,
+      path: c.path,
+      line: c.line,
+      start_line: c.start_line ?? null,
+      side: c.side ?? 'RIGHT',
+      start_side: c.start_side,
+      created_at: new Date().toISOString(),
+    });
+  }
+
   return review;
 }
 
@@ -69,8 +106,8 @@ function createPostedComment(raw: string | undefined): PRComment {
   const comment: PRComment = {
     id: Date.now(),
     user: {
-      login: 'octocat',
-      avatar_url: 'https://avatars.githubusercontent.com/u/583231',
+      login: MOCK_LOGIN,
+      avatar_url: MOCK_AVATAR,
     },
     body: params.body,
     path: params.path,
@@ -123,10 +160,10 @@ const searchIssuesFixture = {
 };
 
 const userFixture = {
-  login: 'octocat',
+  login: MOCK_LOGIN,
   id: 1,
-  avatar_url: 'https://avatars.githubusercontent.com/u/583231',
-  name: 'The Octocat',
+  avatar_url: MOCK_AVATAR,
+  name: 'Divy Bot',
 };
 
 const ENDPOINT_PATTERNS: Array<{
@@ -221,7 +258,12 @@ function resolveGithubFetch(args: InvokeArgs): unknown {
     return all.slice(start, start + per);
   }
   if (/\/repos\/[^/]+\/[^/]+\/pulls\/\d+$/.test(endpoint)) {
-    return stress ? stressMetadata : prMetadata;
+    const base = (stress ? stressMetadata : prMetadata) as Record<string, unknown>;
+    if (method === 'PATCH') {
+      const patchBody = (args.body ? JSON.parse(args.body as string) : {}) as { body?: string };
+      if (patchBody.body != null) prBodyOverride = patchBody.body;
+    }
+    return { ...base, body: prBodyOverride ?? (base.body as string | null) };
   }
 
   for (const { pattern, fixture } of ENDPOINT_PATTERNS) {

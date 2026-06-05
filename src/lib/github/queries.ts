@@ -100,6 +100,20 @@ export function usePRMetadata(owner: string, repo: string, number: number) {
   })
 }
 
+export function useEditPRBody(owner: string, repo: string, number: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: string) =>
+      githubFetch<PRMetadata>(`/repos/${owner}/${repo}/pulls/${number}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ body }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pr', owner, repo, number, 'metadata'] })
+    },
+  })
+}
+
 export function usePRDiff(owner: string, repo: string, number: number) {
   return useQuery({
     queryKey: ['pr', owner, repo, number, 'diff'],
@@ -198,9 +212,19 @@ export function useMyPRs() {
   })
 }
 
+export interface PendingReviewComment {
+  path: string
+  line: number
+  side: 'LEFT' | 'RIGHT'
+  body: string
+  start_line?: number
+  start_side?: 'LEFT' | 'RIGHT'
+}
+
 export interface SubmitReviewParams {
   event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'
   body: string
+  comments?: PendingReviewComment[]
 }
 
 export function useSubmitReview(owner: string, repo: string, number: number) {
@@ -217,6 +241,7 @@ export function useSubmitReview(owner: string, repo: string, number: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['pr', owner, repo, number, 'reviews'] })
       queryClient.invalidateQueries({ queryKey: ['pr', owner, repo, number, 'threads'] })
+      queryClient.invalidateQueries({ queryKey: ['pr', owner, repo, number, 'comments'] })
     },
   })
 }

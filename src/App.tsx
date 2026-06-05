@@ -23,7 +23,13 @@ function App() {
     <div className="flex flex-col h-screen">
       <div className="sticky top-0 z-10 bg-background">
         <PRUrlInput onNavigate={handleNavigate} />
-        <nav className="flex gap-1 p-2 border-b">
+        <nav className="flex items-center gap-1 p-2 border-b">
+          <div className="flex items-center gap-2 pl-1 pr-3 mr-1 border-r">
+            <img src="/logo.svg" alt="reviews-plus logo" className="size-6" />
+            <span className="text-sm font-semibold tracking-tight">
+              reviews<span className="text-green-600">+</span>
+            </span>
+          </div>
           <Button
             variant={view === "review" ? "secondary" : "ghost"}
             size="sm"

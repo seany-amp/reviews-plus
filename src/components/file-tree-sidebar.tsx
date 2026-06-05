@@ -67,21 +67,11 @@ export function FileTreeSidebar({
   }, [files, model])
 
   useEffect(() => {
-    if (selectedPaths.length > 0) {
-      const selected = selectedPaths[selectedPaths.length - 1]
-      onSelectFileRef.current(selected)
-      onMarkViewed(selected)
-    }
+    if (selectedPaths.length === 0) return
+    const selected = selectedPaths[selectedPaths.length - 1]
+    onSelectFileRef.current(selected)
+    onMarkViewed(selected)
   }, [selectedPaths, onMarkViewed])
-
-  useEffect(() => {
-    if (!activeFile) return
-    const item = model.getItem(activeFile)
-    if (item && !item.isSelected) {
-      item.select()
-      model.scrollToPath(activeFile, { focus: false })
-    }
-  }, [activeFile, model])
 
   if (!isOpen) {
     return null

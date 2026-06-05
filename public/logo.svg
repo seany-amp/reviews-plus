@@ -1,0 +1,15 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="4" y="4" width="56" height="56" rx="16" fill="url(#rp_grad)"/>
+  <rect x="16" y="20" width="20" height="5" rx="2.5" fill="#ffffff" opacity="0.95"/>
+  <rect x="16" y="30" width="28" height="5" rx="2.5" fill="#ffffff" opacity="0.55"/>
+  <rect x="16" y="40" width="16" height="5" rx="2.5" fill="#ffffff" opacity="0.95"/>
+  <circle cx="46" cy="44" r="11" fill="#0d1117"/>
+  <circle cx="46" cy="44" r="9" fill="#3fb950"/>
+  <path d="M46 39.5 v9 M41.5 44 h9" stroke="#0d1117" stroke-width="2.4" stroke-linecap="round"/>
+  <defs>
+    <linearGradient id="rp_grad" x1="4" y1="4" x2="60" y2="60" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#b27bff"/>
+      <stop offset="1" stop-color="#8957e5"/>
+    </linearGradient>
+  </defs>
+</svg>

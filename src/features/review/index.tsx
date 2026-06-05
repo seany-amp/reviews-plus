@@ -15,7 +15,10 @@ import {
   useSubmitReview,
   useChecks,
   aggregateChecks,
+  useEditPRBody,
 } from '@/lib/github'
+import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { MergedCheckRun } from '@/lib/github'
 import { parsePatchFiles, preloadHighlighter } from '@pierre/diffs'
 import { CodeView, WorkerPoolContextProvider } from '@pierre/diffs/react'
@@ -47,8 +50,8 @@ import {
   WORKER_HIGHLIGHTER_OPTIONS,
 } from '@/lib/diffs/worker-pool'
 import type { PRIdentifier } from '@/lib/github/parse-url'
-import type { PRMetadata, PRReview, PRComment } from '@/lib/github/types'
-import type { SubmitReviewParams } from '@/lib/github/queries'
+import type { PRMetadata, PRReview, PRComment, PRFile } from '@/lib/github/types'
+import type { SubmitReviewParams, PendingReviewComment } from '@/lib/github/queries'
 import { toast } from 'sonner'
 import {
   AlertTriangle,
@@ -85,6 +88,21 @@ interface ActiveComment {
   startSide?: 'additions' | 'deletions'
 }
 
+// A staged (pending) comment that will be submitted as part of a review
+interface PendingComment {
+  path: string
+  line: number
+  side: 'additions' | 'deletions'
+  body: string
+  startLine?: number
+  startSide?: 'additions' | 'deletions'
+}
+
+// Stable key for deduplicating pending comments
+function pendingCommentKey(c: Pick<PendingComment, 'path' | 'line' | 'side'>): string {
+  return `${c.path}:${c.line}:${c.side}`
+}
+
 interface CommentFormMarker {
   _type: 'comment-form'
   file: string
@@ -92,6 +110,11 @@ interface CommentFormMarker {
   side: 'additions' | 'deletions'
   startLine?: number
   startSide?: 'additions' | 'deletions'
+}
+
+interface PendingAnnotationMarker {
+  _type: 'pending'
+  comment: PendingComment
 }
 
 interface ReplyFormMarker {
@@ -106,6 +129,7 @@ interface AnnotationPayload {
   comment?: PRComment
   form?: CommentFormMarker
   reply?: ReplyFormMarker
+  pending?: PendingAnnotationMarker
 }
 
 interface ReviewViewProps {
@@ -206,8 +230,13 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   const editComment = useEditComment(owner, repo, number)
   const deleteComment = useDeleteComment(owner, repo, number)
   const submitReview = useSubmitReview(owner, repo, number)
+  const editPRBody = useEditPRBody(owner, repo, number)
   const headSha = metadata.data?.head.sha ?? ''
   const checks = useChecks(owner, repo, headSha)
+
+  const canEditDescription =
+    !!currentUser.data?.login &&
+    currentUser.data.login === metadata.data?.user.login
 
   const [activeComment, setActiveComment] = useState<ActiveComment | null>(null)
   const [activeReply, setActiveReply] = useState<{
@@ -216,6 +245,8 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     side: 'additions' | 'deletions'
     parentId: number
   } | null>(null)
+
+  const [pendingComments, setPendingComments] = useState<PendingComment[]>([])
 
   const [themeType, setThemeType] = useState(getInitialThemeType())
   useEffect(() => {
@@ -319,6 +350,22 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     return patches.flatMap((patch) => patch.files)
   }, [diff.data])
 
+  // Tree mirrors the rendered diff exactly (built from parsedFiles, enriched with
+  // REST stats when available) so the file list always matches what's scrollable.
+  const treeFiles = useMemo<PRFile[]>(() => {
+    const byName = new Map((files.data ?? []).map((f) => [f.filename, f]))
+    return parsedFiles.map((pf) => {
+      const existing = byName.get(pf.name)
+      if (existing) return existing
+      return {
+        filename: pf.name,
+        status: pf.prevName ? 'renamed' : 'modified',
+        additions: 0,
+        deletions: 0,
+      } satisfies PRFile
+    })
+  }, [parsedFiles, files.data])
+
   const fileComments = useMemo(() => comments.data ?? [], [comments.data])
 
   const commentsByPath = useMemo(() => {
@@ -369,11 +416,12 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
           commentsByPath.get(file.name) ?? EMPTY_COMMENTS,
           activeComment,
           activeReply,
+          pendingComments.filter((c) => c.path === file.name),
         ),
       )
     }
     return m
-  }, [parsedFiles, commentsByPath, activeComment, activeReply])
+  }, [parsedFiles, commentsByPath, activeComment, activeReply, pendingComments])
 
   // Per-file version bumped only when that file's annotations change, so
   // CodeView keeps the cached record snapshot for unchanged files.
@@ -482,6 +530,33 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     [metadata.data, postComment],
   )
 
+  const handleAddPendingComment = useCallback(
+    (
+      body: string,
+      path: string,
+      line: number,
+      side: 'additions' | 'deletions',
+      startLine?: number,
+      startSide?: 'additions' | 'deletions',
+    ) => {
+      setPendingComments((prev) => {
+        const key = pendingCommentKey({ path, line, side })
+        const without = prev.filter((c) => pendingCommentKey(c) !== key)
+        return [...without, { path, line, side, body, startLine, startSide }]
+      })
+      setActiveComment(null)
+      codeViewRef.current?.clearSelectedLines()
+      toast.success('Comment staged for review')
+    },
+    [],
+  )
+
+  const handleDiscardPendingComment = useCallback((c: PendingComment) => {
+    setPendingComments((prev) =>
+      prev.filter((p) => pendingCommentKey(p) !== pendingCommentKey(c)),
+    )
+  }, [])
+
   const handleSubmitReply = useCallback(
     (body: string, path: string, line: number, side: 'additions' | 'deletions', parentId: number) => {
       if (!metadata.data) return
@@ -589,12 +664,12 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
     [deleteComment],
   )
 
-  const scrollToItem = useCallback((id: string) => {
+  const scrollToItem = useCallback((id: string, behavior: 'smooth' | 'instant' = 'smooth') => {
     codeViewRef.current?.scrollTo({
       type: 'item',
       id,
       align: 'start',
-      behavior: 'smooth',
+      behavior,
     } satisfies CodeViewScrollTarget)
   }, [])
 
@@ -618,12 +693,14 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
   const handleScrollToFile = useCallback(
     (path: string) => {
       isScrollingFromTreeRef.current = true
-      scrollToItem(path)
+      scrollToItem(path, 'instant')
+      const idx = fileIndex.get(path)
+      if (idx != null) setCurrentFileIndex(idx)
       setTimeout(() => {
         isScrollingFromTreeRef.current = false
-      }, 500)
+      }, 250)
     },
-    [scrollToItem],
+    [scrollToItem, fileIndex],
   )
 
   const scrollToComment = useCallback(
@@ -658,21 +735,29 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
       if (payload.form) {
         return (
           <CommentForm
-            onSubmit={(body) => handleSubmitComment(body, payload.form!.file, payload.form!.line, payload.form!.side, payload.form!.startLine, payload.form!.startSide)}
+            onSubmitImmediate={(body) => handleSubmitComment(body, payload.form!.file, payload.form!.line, payload.form!.side, payload.form!.startLine, payload.form!.startSide)}
+            onAddPending={(body) => handleAddPendingComment(body, payload.form!.file, payload.form!.line, payload.form!.side, payload.form!.startLine, payload.form!.startSide)}
             onCancel={handleCancelComment}
             isSubmitting={postComment.isPending}
-            placeholder="Add a comment..."
           />
         )
       }
 
       if (payload.reply) {
         return (
-          <CommentForm
+          <ReplyForm
             onSubmit={(body) => handleSubmitReply(body, payload.reply!.file, payload.reply!.line, payload.reply!.side, payload.reply!.parentId)}
             onCancel={handleCancelComment}
             isSubmitting={postComment.isPending}
-            placeholder="Reply..."
+          />
+        )
+      }
+
+      if (payload.pending) {
+        return (
+          <PendingCommentAnnotation
+            comment={payload.pending.comment}
+            onDiscard={handleDiscardPendingComment}
           />
         )
       }
@@ -690,7 +775,7 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
 
       return null
     },
-    [handleSubmitComment, handleSubmitReply, handleCancelComment, handleStartReply, postComment.isPending],
+    [handleSubmitComment, handleAddPendingComment, handleSubmitReply, handleCancelComment, handleStartReply, handleDiscardPendingComment, postComment.isPending],
   )
 
   const renderGutterUtility = useCallback(
@@ -871,7 +956,7 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
           onExpand={() => setSidebarOpen(true)}
         >
           <FileTreeSidebar
-            files={files.data ?? []}
+            files={treeFiles}
             onSelectFile={handleScrollToFile}
             isOpen={sidebarOpen}
             activeFile={activeFile}
@@ -898,13 +983,25 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
               commentsPanelOpen={commentsPanelOpen}
               onToggleCommentsPanel={toggleCommentsPanel}
               checksData={checks.data}
+              pendingComments={pendingComments}
               onSubmitReview={(params) =>
                 submitReview.mutate(params, {
-                  onSuccess: () => toast.success('Review submitted'),
+                  onSuccess: () => {
+                    setPendingComments([])
+                    toast.success('Review submitted')
+                  },
                   onError: (err) => toast.error(`Failed to submit review: ${err.message}`),
                 })
               }
               isSubmittingReview={submitReview.isPending}
+              canEditDescription={canEditDescription}
+              isSavingDescription={editPRBody.isPending}
+              onSaveDescription={(body) =>
+                editPRBody.mutate(body, {
+                  onSuccess: () => toast.success('Description updated'),
+                  onError: (err) => toast.error(`Failed to update description: ${err.message}`),
+                })
+              }
             />
           )}
           <WorkerPoolContextProvider
@@ -946,12 +1043,14 @@ function ReviewContent({ pr }: { pr: PRIdentifier }) {
               outdatedById={threadStateById.outdated}
               threadIdByRootId={threadStateById.threadIdByRootId}
               currentUserLogin={currentUser.data?.login}
+              pendingComments={pendingComments}
               onGoToComment={scrollToComment}
               onSubmitReply={handlePanelReply}
               onResolveThread={handleResolveThread}
               onUnresolveThread={handleUnresolveThread}
               onEditComment={handleEditComment}
               onDeleteComment={handleDeleteComment}
+              onDiscardPending={handleDiscardPendingComment}
               isSubmitting={postComment.isPending}
             />
           )}
@@ -981,8 +1080,12 @@ function PRHeader({
   commentsPanelOpen,
   onToggleCommentsPanel,
   checksData,
+  pendingComments,
   onSubmitReview,
   isSubmittingReview,
+  canEditDescription,
+  isSavingDescription,
+  onSaveDescription,
 }: {
   metadata: PRMetadata
   reviews: PRReview[] | undefined
@@ -992,8 +1095,12 @@ function PRHeader({
   commentsPanelOpen: boolean
   onToggleCommentsPanel: () => void
   checksData: MergedCheckRun[] | undefined
+  pendingComments: PendingComment[]
   onSubmitReview: (params: SubmitReviewParams) => void
   isSubmittingReview: boolean
+  canEditDescription: boolean
+  isSavingDescription: boolean
+  onSaveDescription: (body: string) => void
 }) {
   const [descOpen, setDescOpen] = useState<boolean>(() => {
     try {
@@ -1074,6 +1181,7 @@ function PRHeader({
             <ReviewChangesButton
               onSubmit={onSubmitReview}
               isSubmitting={isSubmittingReview}
+              pendingComments={pendingComments}
             />
           </div>
         </div>
@@ -1094,7 +1202,12 @@ function PRHeader({
         </div>
         <Collapsible.Content>
           <div className="px-4 pb-4">
-            <PRDescription body={metadata.body} />
+            <PRDescription
+              body={metadata.body}
+              canEdit={canEditDescription}
+              isSaving={isSavingDescription}
+              onSave={onSaveDescription}
+            />
           </div>
         </Collapsible.Content>
       </Collapsible.Root>
@@ -1102,16 +1215,71 @@ function PRHeader({
   )
 }
 
-function PRDescription({ body }: { body: string | null }) {
-  if (!body) {
+function PRDescription({
+  body,
+  canEdit,
+  isSaving,
+  onSave,
+}: {
+  body: string | null
+  canEdit: boolean
+  isSaving: boolean
+  onSave: (body: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(body ?? '')
+
+  useEffect(() => {
+    if (!editing) setDraft(body ?? '')
+  }, [body, editing])
+
+  if (editing) {
     return (
-      <p className="text-xs text-muted-foreground italic">No description provided.</p>
+      <div className="space-y-2">
+        <textarea
+          className="w-full min-h-48 rounded border bg-background px-3 py-2 text-sm font-mono resize-y focus:outline-none focus:ring-1 focus:ring-ring"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          autoFocus
+        />
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setEditing(false)} disabled={isSaving}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            disabled={isSaving || draft === (body ?? '')}
+            onClick={() => {
+              onSave(draft)
+              setEditing(false)
+            }}
+          >
+            {isSaving ? 'Saving...' : 'Save'}
+          </Button>
+        </div>
+      </div>
     )
   }
 
   return (
-    <div className="text-sm text-foreground whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto rounded border bg-muted/30 p-3 font-mono text-xs">
-      {body}
+    <div className="relative max-h-80 overflow-y-auto rounded border bg-muted/30 p-3">
+      {canEdit && (
+        <Button
+          variant="ghost"
+          size="xs"
+          className="absolute right-2 top-2"
+          onClick={() => setEditing(true)}
+        >
+          Edit
+        </Button>
+      )}
+      {body ? (
+        <div className="markdown-body text-sm leading-relaxed">
+          <Markdown remarkPlugins={[remarkGfm]}>{body}</Markdown>
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground italic">No description provided.</p>
+      )}
     </div>
   )
 }
@@ -1223,16 +1391,30 @@ type ReviewEvent = SubmitReviewParams['event']
 function ReviewChangesButton({
   onSubmit,
   isSubmitting,
+  pendingComments,
 }: {
   onSubmit: (params: SubmitReviewParams) => void
   isSubmitting: boolean
+  pendingComments: PendingComment[]
 }) {
   const [open, setOpen] = useState(false)
   const [event, setEvent] = useState<ReviewEvent>('COMMENT')
   const [body, setBody] = useState('')
 
   const handleSubmit = () => {
-    onSubmit({ event, body })
+    const comments: PendingReviewComment[] = pendingComments.map((c) => ({
+      path: c.path,
+      line: c.line,
+      side: c.side === 'deletions' ? 'LEFT' : 'RIGHT',
+      body: c.body,
+      ...(c.startLine != null && c.startLine !== c.line
+        ? {
+            start_line: c.startLine,
+            start_side: (c.startSide ?? c.side) === 'deletions' ? 'LEFT' : 'RIGHT',
+          }
+        : {}),
+    }))
+    onSubmit({ event, body, ...(comments.length > 0 ? { comments } : {}) })
     setOpen(false)
     setBody('')
     setEvent('COMMENT')
@@ -1254,7 +1436,9 @@ function ReviewChangesButton({
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
         <Button variant="outline" size="sm">
-          Review changes
+          {pendingComments.length > 0
+            ? `Review changes (${pendingComments.length})`
+            : 'Review changes'}
           <ChevronDown className="size-3.5" />
         </Button>
       </Popover.Trigger>
@@ -1339,6 +1523,7 @@ function buildAnnotationsForFile(
   comments: PRComment[],
   activeComment: ActiveComment | null,
   activeReply: { file: string; line: number; side: 'additions' | 'deletions'; parentId: number } | null,
+  filePendingComments: PendingComment[],
 ): DiffLineAnnotation<AnnotationPayload>[] {
   const annotations: DiffLineAnnotation<AnnotationPayload>[] = comments
     .filter((c) => c.line !== null)
@@ -1347,6 +1532,14 @@ function buildAnnotationsForFile(
       lineNumber: comment.line!,
       metadata: { comment },
     }))
+
+  for (const pending of filePendingComments) {
+    annotations.push({
+      side: pending.side,
+      lineNumber: pending.line,
+      metadata: { pending: { _type: 'pending', comment: pending } },
+    })
+  }
 
   if (activeComment && activeComment.file === filename) {
     annotations.push({
@@ -1400,6 +1593,7 @@ function areAnnotationsEqual(
     if (Boolean(xm?.form) !== Boolean(ym?.form)) return false
     if (xm?.form?.startLine !== ym?.form?.startLine) return false
     if (xm?.reply?.parentId !== ym?.reply?.parentId) return false
+    if (xm?.pending?.comment.body !== ym?.pending?.comment.body) return false
   }
   return true
 }
@@ -1430,16 +1624,14 @@ function formatRelativeTime(dateStr: string): string {
   return date.toLocaleDateString()
 }
 
-function CommentForm({
+function ReplyForm({
   onSubmit,
   onCancel,
   isSubmitting,
-  placeholder,
 }: {
   onSubmit: (body: string) => void
   onCancel: () => void
   isSubmitting: boolean
-  placeholder: string
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -1452,7 +1644,7 @@ function CommentForm({
       <textarea
         ref={textareaRef}
         className="diffs-comment-textarea"
-        placeholder={placeholder}
+        placeholder="Reply..."
         rows={3}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -1478,9 +1670,105 @@ function CommentForm({
             if (value) onSubmit(value)
           }}
         >
-          {isSubmitting ? 'Posting...' : 'Comment'}
+          {isSubmitting ? 'Posting...' : 'Reply'}
         </button>
       </div>
+    </div>
+  )
+}
+
+function CommentForm({
+  onSubmitImmediate,
+  onAddPending,
+  onCancel,
+  isSubmitting,
+}: {
+  onSubmitImmediate: (body: string) => void
+  onAddPending: (body: string) => void
+  onCancel: () => void
+  isSubmitting: boolean
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    textareaRef.current?.focus()
+  }, [])
+
+  const currentBody = () => textareaRef.current?.value.trim() ?? ''
+
+  return (
+    <div className="diffs-comment-form">
+      <textarea
+        ref={textareaRef}
+        className="diffs-comment-textarea"
+        placeholder="Add a comment..."
+        rows={3}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault()
+            const value = currentBody()
+            if (value) onSubmitImmediate(value)
+          }
+          if (e.key === 'Escape') {
+            e.preventDefault()
+            onCancel()
+          }
+        }}
+      />
+      <div className="diffs-comment-form-buttons">
+        <button className="diffs-comment-cancel-btn" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          className="diffs-comment-submit-btn"
+          style={{ background: 'transparent', color: 'inherit', border: '1px solid currentColor' }}
+          onClick={() => {
+            const value = currentBody()
+            if (value) onAddPending(value)
+          }}
+        >
+          Add review comment
+        </button>
+        <button
+          className="diffs-comment-submit-btn"
+          disabled={isSubmitting}
+          onClick={() => {
+            const value = currentBody()
+            if (value) onSubmitImmediate(value)
+          }}
+        >
+          {isSubmitting ? 'Posting...' : 'Add single comment'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function PendingCommentAnnotation({
+  comment,
+  onDiscard,
+}: {
+  comment: PendingComment
+  onDiscard: (c: PendingComment) => void
+}) {
+  return (
+    <div
+      className="diffs-existing-comment"
+      style={{ borderLeftColor: 'var(--color-amber-400, #fbbf24)', borderLeftWidth: 3, opacity: 0.9 }}
+    >
+      <div className="diffs-comment-header">
+        <span className="diffs-comment-author" style={{ color: 'var(--color-amber-600, #d97706)' }}>
+          Pending review comment
+        </span>
+      </div>
+      <div className="diffs-comment-body">{comment.body}</div>
+      <button
+        className="diffs-reply-btn"
+        style={{ color: 'var(--color-destructive, #ef4444)' }}
+        onClick={() => onDiscard(comment)}
+      >
+        Discard
+      </button>
     </div>
   )
 }
